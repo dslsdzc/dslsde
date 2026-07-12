@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn>=0.27
+lief>=0.14
+capstone>=5.0
+unicorn>=2.0
+Jinja2>=3.1
+maturin>=1.14

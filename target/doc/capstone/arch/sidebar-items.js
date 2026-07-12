@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ArchDetail","ArchOperand"],"mod":["arm","arm64","bpf","evm","m680x","m68k","mips","mos65xx","ppc","riscv","sh","sparc","sysz","tms320c64x","tricore","x86","xcore"],"struct":["CapstoneBuilder","InsnOffsetSpan"],"trait":["BuildsCapstone","BuildsCapstoneEndian","BuildsCapstoneExtraMode","BuildsCapstoneSyntax","DetailsArchInsn"]};

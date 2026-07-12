@@ -1,0 +1,136 @@
+   0.040404009s  INFO prepare_target{force=false package_id=dslsde-core v0.1.0 (/home/DslsDZC/dslsde) target="dslsde_core"}: cargo::core::compiler::fingerprint: dependency on `build_script_build` is newer than we are 1783867406.638708179s > 1783857728.548474463s "/home/DslsDZC/.cargo/registry/src/mirrors.cernet.edu.cn-cf4f1d0b4f95b1fb/pyo3-ffi-0.23.5"
+   0.040437793s  INFO prepare_target{force=false package_id=dslsde-core v0.1.0 (/home/DslsDZC/dslsde) target="dslsde_core"}: cargo::core::compiler::fingerprint: dependency on `build_script_build` is newer than we are 1783867406.575708177s > 1783857728.583474464s "/home/DslsDZC/.cargo/registry/src/mirrors.cernet.edu.cn-cf4f1d0b4f95b1fb/pyo3-0.23.5"
+   0.040875265s  INFO prepare_target{force=false package_id=dslsde-core v0.1.0 (/home/DslsDZC/dslsde) target="dslsde_core"}: cargo::core::compiler::fingerprint: fingerprint error for dslsde-core v0.1.0 (/home/DslsDZC/dslsde)/Check { test: false }/TargetInner { ..: lib_target("dslsde_core", ["cdylib"], "/home/DslsDZC/dslsde/src/lib.rs", Edition2021) }
+   0.040893411s  INFO prepare_target{force=false package_id=dslsde-core v0.1.0 (/home/DslsDZC/dslsde) target="dslsde_core"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/DslsDZC/dslsde/target/debug/.fingerprint/dslsde-core-bd1947a27ac18dcb/lib-dslsde_core`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: cargo_util::paths::read_bytes
+   1: cargo_util::paths::read
+   2: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   3: cargo::core::compiler::fingerprint::prepare_target
+   4: cargo::core::compiler::compile
+   5: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   6: cargo::ops::cargo_compile::compile_ws
+   7: cargo::ops::cargo_compile::compile_with_exec
+   8: cargo::ops::cargo_compile::compile
+   9: cargo::commands::check::exec
+  10: <cargo::cli::Exec>::exec
+  11: cargo::main
+  12: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  13: std::rt::lang_start::<()>::{closure#0}
+  14: <&dyn core::ops::function::Fn<(), Output = i32> + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/ops/function.rs:287:21
+  15: std::panicking::catch_unwind::do_call::<&dyn core::ops::function::Fn<(), Output = i32> + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe, i32>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panicking.rs:581:40
+  16: std::panicking::catch_unwind::<i32, &dyn core::ops::function::Fn<(), Output = i32> + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panicking.rs:544:19
+  17: std::panic::catch_unwind::<&dyn core::ops::function::Fn<(), Output = i32> + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe, i32>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panic.rs:359:14
+  18: std::rt::lang_start_internal::{closure#0}
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/rt.rs:175:24
+  19: std::panicking::catch_unwind::do_call::<std::rt::lang_start_internal::{closure#0}, isize>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panicking.rs:581:40
+  20: std::panicking::catch_unwind::<isize, std::rt::lang_start_internal::{closure#0}>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panicking.rs:544:19
+  21: std::panic::catch_unwind::<std::rt::lang_start_internal::{closure#0}, isize>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panic.rs:359:14
+  22: std::rt::lang_start_internal
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/rt.rs:171:5
+  23: main
+  24: <unknown>
+  25: __libc_start_main
+  26: <unknown>
+   0.054667628s  INFO prepare_target{force=false package_id=dslsde-core v0.1.0 (/home/DslsDZC/dslsde) target="build-script-build"}: cargo::core::compiler::fingerprint: fingerprint dirty for dslsde-core v0.1.0 (/home/DslsDZC/dslsde)/RunCustomBuild/TargetInner { ..: custom_build_target("build-script-build", "/home/DslsDZC/dslsde/build.rs", Edition2021) }
+   0.054692610s  INFO prepare_target{force=false package_id=dslsde-core v0.1.0 (/home/DslsDZC/dslsde) target="build-script-build"}: cargo::core::compiler::fingerprint:     dirty: PrecalculatedComponentsChanged { old: "1783867404.413708125s (src/infer.rs)", new: "1783867505.192710559s (src/infer.rs)" }
+   0.054966901s  INFO prepare_target{force=false package_id=pyo3 v0.23.5 target="pyo3"}: cargo::core::compiler::fingerprint: fingerprint dirty for pyo3 v0.23.5/Check { test: false }/TargetInner { ..: lib_target("pyo3", ["lib"], "/home/DslsDZC/.cargo/registry/src/mirrors.cernet.edu.cn-cf4f1d0b4f95b1fb/pyo3-0.23.5/src/lib.rs", Edition2021) }
+   0.054978633s  INFO prepare_target{force=false package_id=pyo3 v0.23.5 target="pyo3"}: cargo::core::compiler::fingerprint:     dirty: UnitDependencyInfoChanged { unit: UnitIndex(31) }
+   0.056336005s  INFO prepare_target{force=false package_id=pyo3 v0.23.5 target="build-script-build"}: cargo::core::compiler::fingerprint: fingerprint dirty for pyo3 v0.23.5/RunCustomBuild/TargetInner { ..: custom_build_target("build-script-build", "/home/DslsDZC/.cargo/registry/src/mirrors.cernet.edu.cn-cf4f1d0b4f95b1fb/pyo3-0.23.5/build.rs", Edition2021) }
+   0.056352658s  INFO prepare_target{force=false package_id=pyo3 v0.23.5 target="build-script-build"}: cargo::core::compiler::fingerprint:     dirty: UnitDependencyInfoChanged { unit: UnitIndex(26) }
+   0.057199913s  INFO prepare_target{force=false package_id=pyo3-ffi v0.23.5 target="build-script-build"}: cargo::core::compiler::fingerprint: fingerprint dirty for pyo3-ffi v0.23.5/RunCustomBuild/TargetInner { ..: custom_build_target("build-script-build", "/home/DslsDZC/.cargo/registry/src/mirrors.cernet.edu.cn-cf4f1d0b4f95b1fb/pyo3-ffi-0.23.5/build.rs", Edition2021) }
+   0.057213064s  INFO prepare_target{force=false package_id=pyo3-ffi v0.23.5 target="build-script-build"}: cargo::core::compiler::fingerprint:     dirty: EnvVarChanged { name: "PYO3_USE_ABI3_FORWARD_COMPATIBILITY", old_value: Some("1"), new_value: None }
+   0.057409199s  INFO prepare_target{force=false package_id=pyo3-ffi v0.23.5 target="pyo3_ffi"}: cargo::core::compiler::fingerprint: fingerprint dirty for pyo3-ffi v0.23.5/Check { test: false }/TargetInner { ..: lib_target("pyo3_ffi", ["lib"], "/home/DslsDZC/.cargo/registry/src/mirrors.cernet.edu.cn-cf4f1d0b4f95b1fb/pyo3-ffi-0.23.5/src/lib.rs", Edition2021) }
+   0.057420471s  INFO prepare_target{force=false package_id=pyo3-ffi v0.23.5 target="pyo3_ffi"}: cargo::core::compiler::fingerprint:     dirty: UnitDependencyInfoChanged { unit: UnitIndex(33) }
+   0.058809070s  INFO prepare_target{force=false package_id=dslsde-core v0.1.0 (/home/DslsDZC/dslsde) target="dslsde_core"}: cargo::core::compiler::fingerprint: fingerprint error for dslsde-core v0.1.0 (/home/DslsDZC/dslsde)/Check { test: true }/TargetInner { ..: lib_target("dslsde_core", ["cdylib"], "/home/DslsDZC/dslsde/src/lib.rs", Edition2021) }
+   0.058828054s  INFO prepare_target{force=false package_id=dslsde-core v0.1.0 (/home/DslsDZC/dslsde) target="dslsde_core"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/DslsDZC/dslsde/target/debug/.fingerprint/dslsde-core-1d6f7a868e154d2b/test-lib-dslsde_core`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: cargo_util::paths::read_bytes
+   1: cargo_util::paths::read
+   2: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   3: cargo::core::compiler::fingerprint::prepare_target
+   4: cargo::core::compiler::compile
+   5: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   6: cargo::ops::cargo_compile::compile_ws
+   7: cargo::ops::cargo_compile::compile_with_exec
+   8: cargo::ops::cargo_compile::compile
+   9: cargo::commands::check::exec
+  10: <cargo::cli::Exec>::exec
+  11: cargo::main
+  12: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  13: std::rt::lang_start::<()>::{closure#0}
+  14: <&dyn core::ops::function::Fn<(), Output = i32> + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/ops/function.rs:287:21
+  15: std::panicking::catch_unwind::do_call::<&dyn core::ops::function::Fn<(), Output = i32> + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe, i32>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panicking.rs:581:40
+  16: std::panicking::catch_unwind::<i32, &dyn core::ops::function::Fn<(), Output = i32> + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panicking.rs:544:19
+  17: std::panic::catch_unwind::<&dyn core::ops::function::Fn<(), Output = i32> + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe, i32>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panic.rs:359:14
+  18: std::rt::lang_start_internal::{closure#0}
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/rt.rs:175:24
+  19: std::panicking::catch_unwind::do_call::<std::rt::lang_start_internal::{closure#0}, isize>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panicking.rs:581:40
+  20: std::panicking::catch_unwind::<isize, std::rt::lang_start_internal::{closure#0}>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panicking.rs:544:19
+  21: std::panic::catch_unwind::<std::rt::lang_start_internal::{closure#0}, isize>
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/panic.rs:359:14
+  22: std::rt::lang_start_internal
+             at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/rt.rs:171:5
+  23: main
+  24: <unknown>
+  25: __libc_start_main
+  26: <unknown>
+   Compiling pyo3-ffi v0.23.5
+   Compiling dslsde-core v0.1.0 (/home/DslsDZC/dslsde)
+error: failed to run custom build command for `pyo3-ffi v0.23.5`
+note: To improve backtraces for build dependencies, set the CARGO_PROFILE_DEV_BUILD_OVERRIDE_DEBUG=true environment variable to enable debug information generation.
+
+Caused by:
+  process didn't exit successfully: `/home/DslsDZC/dslsde/target/debug/build/pyo3-ffi-c86ae8f42100f5d7/build-script-build` (exit status: 1)
+  --- stdout
+  cargo:rustc-check-cfg=cfg(Py_LIMITED_API)
+  cargo:rustc-check-cfg=cfg(Py_GIL_DISABLED)
+  cargo:rustc-check-cfg=cfg(PyPy)
+  cargo:rustc-check-cfg=cfg(GraalPy)
+  cargo:rustc-check-cfg=cfg(py_sys_config, values("Py_DEBUG", "Py_REF_DEBUG", "Py_TRACE_REFS", "COUNT_ALLOCS"))
+  cargo:rustc-check-cfg=cfg(invalid_from_utf8_lint)
+  cargo:rustc-check-cfg=cfg(pyo3_disable_reference_pool)
+  cargo:rustc-check-cfg=cfg(pyo3_leak_on_drop_without_reference_pool)
+  cargo:rustc-check-cfg=cfg(diagnostic_namespace)
+  cargo:rustc-check-cfg=cfg(c_str_lit)
+  cargo:rustc-check-cfg=cfg(rustc_has_once_lock)
+  cargo:rustc-check-cfg=cfg(fn_ptr_eq)
+  cargo:rustc-check-cfg=cfg(Py_3_7)
+  cargo:rustc-check-cfg=cfg(Py_3_8)
+  cargo:rustc-check-cfg=cfg(Py_3_9)
+  cargo:rustc-check-cfg=cfg(Py_3_10)
+  cargo:rustc-check-cfg=cfg(Py_3_11)
+  cargo:rustc-check-cfg=cfg(Py_3_12)
+  cargo:rustc-check-cfg=cfg(Py_3_13)
+  cargo:rerun-if-env-changed=PYO3_CROSS
+  cargo:rerun-if-env-changed=PYO3_CROSS_LIB_DIR
+  cargo:rerun-if-env-changed=PYO3_CROSS_PYTHON_VERSION
+  cargo:rerun-if-env-changed=PYO3_CROSS_PYTHON_IMPLEMENTATION
+  cargo:rerun-if-env-changed=PYO3_PRINT_CONFIG
+  cargo:rerun-if-env-changed=PYO3_USE_ABI3_FORWARD_COMPATIBILITY
+
+  --- stderr
+  error: the configured Python interpreter version (3.14) is newer than PyO3's maximum supported version (3.13)
+  = help: please check if an updated version of PyO3 is available. Current version: 0.23.5
+  = help: set PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 to suppress this check and build anyway using the stable ABI

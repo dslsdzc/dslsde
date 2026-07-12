@@ -1,0 +1,131 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="capstone-rs"><title>capstone - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="capstone" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../static.files/storage-41dd4d93.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate capstone</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../capstone/index.html">capstone</a><span class="version">0.14.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#capstone-rs" title="capstone-rs">capstone-rs</a></li><li><a href="#requirements" title="Requirements">Requirements</a></li><li><a href="#example" title="Example">Example</a></li><li><a href="#features" title="Features">Features</a></li><li><a href="#reporting-issues" title="Reporting Issues">Reporting Issues</a></li><li><a href="#author" title="Author">Author</a></li><li><a href="#license" title="License">License</a></li></ul><h3><a href="#modules">Crate Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#macros" title="Macros">Macros</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#statics" title="Statics">Statics</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1>Crate <span>capstone</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/capstone/lib.rs.html#1-53">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="capstone-rs"><a class="doc-anchor" href="#capstone-rs">§</a>capstone-rs</h2>
+<p><a href="https://crates.io/crates/capstone"><img src="https://img.shields.io/crates/v/capstone.svg" alt="Crates.io Badge" /></a></p>
+<p>Linux/macOS/Windows <a href="https://github.com/capstone-rust/capstone-rs/actions"><img src="https://github.com/capstone-rust/capstone-rs/actions/workflows/main.yml/badge.svg" alt="Github Workflow CI Badge" /></a>
+|
+FreeBSD <a href="https://cirrus-ci.com/github/capstone-rust/capstone-rs"><img src="https://api.cirrus-ci.com/github/capstone-rust/capstone-rs.svg" alt="Cirrus CI Badge" /></a></p>
+<p><a href="https://codecov.io/gh/capstone-rust/capstone-rs"><img src="https://codecov.io/gh/capstone-rust/capstone-rs/branch/master/graph/badge.svg" alt="codecov" /></a></p>
+<p><strong><a href="https://docs.rs/capstone/">API Documentation</a></strong></p>
+<p>Bindings to the <a href="https://www.capstone-engine.org/">capstone library</a> disassembly framework.</p>
+<p>The <code>Capstone</code> struct is the main interface to the library.</p>
+<h2 id="requirements"><a class="doc-anchor" href="#requirements">§</a>Requirements</h2>
+<p><code>capstone-rs</code> uses the <a href="capstone-sys"><code>capstone-sys</code></a> crate to provide the low-level bindings to the Capstone C library.</p>
+<p>See the <a href="capstone-sys"><code>capstone-sys</code></a> page for the requirements and supported platforms.</p>
+<ul>
+<li>Minimum Rust Version: <code>1.81.0</code></li>
+</ul>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">extern crate </span>capstone;
+
+<span class="kw">use </span>capstone::prelude::<span class="kw-2">*</span>;
+
+<span class="kw">const </span>X86_CODE: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8] = <span class="string">b"\x55\x48\x8b\x05\xb8\x13\x00\x00\xe9\x14\x9e\x08\x00\x45\x31\xe4"</span>;
+
+<span class="doccomment">/// Print register names
+</span><span class="kw">fn </span>reg_names(cs: <span class="kw-2">&amp;</span>Capstone, regs: <span class="kw-2">&amp;</span>[RegId]) -&gt; String {
+    <span class="kw">let </span>names: Vec&lt;String&gt; = regs.iter().map(|<span class="kw-2">&amp;</span>x| cs.reg_name(x).unwrap()).collect();
+    names.join(<span class="string">", "</span>)
+}
+
+<span class="doccomment">/// Print instruction group names
+</span><span class="kw">fn </span>group_names(cs: <span class="kw-2">&amp;</span>Capstone, regs: <span class="kw-2">&amp;</span>[InsnGroupId]) -&gt; String {
+    <span class="kw">let </span>names: Vec&lt;String&gt; = regs.iter().map(|<span class="kw-2">&amp;</span>x| cs.group_name(x).unwrap()).collect();
+    names.join(<span class="string">", "</span>)
+}
+
+<span class="kw">fn </span>main() {
+    <span class="kw">let </span>cs = Capstone::new()
+        .x86()
+        .mode(arch::x86::ArchMode::Mode64)
+        .syntax(arch::x86::ArchSyntax::Att)
+        .detail(<span class="bool-val">true</span>)
+        .build()
+        .expect(<span class="string">"Failed to create Capstone object"</span>);
+
+    <span class="kw">let </span>insns = cs.disasm_all(X86_CODE, <span class="number">0x1000</span>)
+        .expect(<span class="string">"Failed to disassemble"</span>);
+    <span class="macro">println!</span>(<span class="string">"Found {} instructions"</span>, insns.len());
+    <span class="kw">for </span>i <span class="kw">in </span>insns.as_ref() {
+        <span class="macro">println!</span>();
+        <span class="macro">println!</span>(<span class="string">"{}"</span>, i);
+
+        <span class="kw">let </span>detail: InsnDetail = cs.insn_detail(<span class="kw-2">&amp;</span>i).expect(<span class="string">"Failed to get insn detail"</span>);
+        <span class="kw">let </span>arch_detail: ArchDetail = detail.arch_detail();
+        <span class="kw">let </span>ops = arch_detail.operands();
+
+        <span class="kw">let </span>output: <span class="kw-2">&amp;</span>[(<span class="kw-2">&amp;</span>str, String)] = <span class="kw-2">&amp;</span>[
+            (<span class="string">"insn id:"</span>, <span class="macro">format!</span>(<span class="string">"{:?}"</span>, i.id().<span class="number">0</span>)),
+            (<span class="string">"bytes:"</span>, <span class="macro">format!</span>(<span class="string">"{:?}"</span>, i.bytes())),
+            (<span class="string">"read regs:"</span>, reg_names(<span class="kw-2">&amp;</span>cs, detail.regs_read())),
+            (<span class="string">"write regs:"</span>, reg_names(<span class="kw-2">&amp;</span>cs, detail.regs_write())),
+            (<span class="string">"insn groups:"</span>, group_names(<span class="kw-2">&amp;</span>cs, detail.groups())),
+        ];
+
+        <span class="kw">for </span><span class="kw-2">&amp;</span>(<span class="kw-2">ref </span>name, <span class="kw-2">ref </span>message) <span class="kw">in </span>output.iter() {
+            <span class="macro">println!</span>(<span class="string">"{:4}{:12} {}"</span>, <span class="string">""</span>, name, message);
+        }
+
+        <span class="macro">println!</span>(<span class="string">"{:4}operands: {}"</span>, <span class="string">""</span>, ops.len());
+        <span class="kw">for </span>op <span class="kw">in </span>ops {
+            <span class="macro">println!</span>(<span class="string">"{:8}{:?}"</span>, <span class="string">""</span>, op);
+        }
+    }
+}</code></pre></div>
+<p>Produces:</p>
+<div class="example-wrap"><pre class="language-plain"><code>Found 4 instructions
+
+0x1000: pushq %rbp
+    read regs:   rsp
+    write regs:  rsp
+    insn groups: mode64
+
+0x1001: movq 0x13b8(%rip), %rax
+    read regs:
+    write regs:
+    insn groups:
+
+0x1008: jmp 0x8ae21
+    read regs:
+    write regs:
+    insn groups: jump
+
+0x100d: xorl %r12d, %r12d
+    read regs:
+    write regs:  rflags
+    insn groups:</code></pre></div>
+<p>To see more demos, see the <a href="capstone-rs/examples"><code>examples/</code></a> directory.
+More complex demos welcome!</p>
+<h2 id="features"><a class="doc-anchor" href="#features">§</a>Features</h2>
+<ul>
+<li><code>full</code><sup>†</sup>: do not compile Capstone C library in
+<a href="https://www.capstone-engine.org/diet.html">diet mode</a></li>
+<li><code>std</code><sup>†</sup>: enable <code>std</code>-only features, such as the
+<a href="https://doc.rust-lang.org/std/error/trait.Error.html"><code>Error</code> trait</a></li>
+<li><code>use_bindgen</code>: run <code>bindgen</code> to generate Rust bindings to Capstone C library
+instead of using pre-generated bindings (not recommended)</li>
+<li><code>arch_$ARCH</code><sup>†</sup>: enable arch <code>$ARCH</code> support in capstone,
+e.g. <code>arch_arm64</code> enables arch arm64 support</li>
+<li><code>support_all_archs</code><sup>†</sup>: enable all archs available
+in capstone, imply all <code>arch_$ARCH</code> features</li>
+<li><code>check_only</code>: do not compile and link capstone C library,
+you can enable it to speed up <code>cargo check</code> by 5x</li>
+</ul>
+<p><sup>†</sup>: enabled by default</p>
+<h2 id="reporting-issues"><a class="doc-anchor" href="#reporting-issues">§</a>Reporting Issues</h2>
+<p>Please open a <a href="https://github.com/capstone-rust/capstone-rs/issues">Github issue</a></p>
+<h2 id="author"><a class="doc-anchor" href="#author">§</a>Author</h2>
+<ul>
+<li>Library Author: Nguyen Anh Quynh</li>
+<li>Binding Author(s):
+<ul>
+<li>m4b <a href="mailto:m4b.github.io@gmail.com">m4b.github.io@gmail.com</a></li>
+<li>Richo Healey <a href="mailto:richo@psych0tik.net">richo@psych0tik.net</a></li>
+<li>Travis Finkenauer <a href="mailto:tmfinken@gmail.com">tmfinken@gmail.com</a></li>
+</ul>
+</li>
+</ul>
+<p>You may find a <a href="https://github.com/capstone-rust/capstone-rs/graphs/contributors">full list of contributors on Github</a>.</p>
+<h2 id="license"><a class="doc-anchor" href="#license">§</a>License</h2>
+<p><a href="capstone-rs/LICENSE">MIT</a></p>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="InsnGroupType/index.html" title="mod capstone::InsnGroupType">Insn<wbr>Group<wbr>Type</a></dt><dt><a class="mod" href="arch/index.html" title="mod capstone::arch">arch</a></dt><dd>Contains architecture-specific types and modules</dd><dt><a class="mod" href="prelude/index.html" title="mod capstone::prelude">prelude</a></dt><dd>Contains items that you probably want to always import</dd></dl><h2 id="macros" class="section-header">Macros<a href="#macros" class="anchor">§</a></h2><dl class="item-table"><dt><a class="macro" href="macro.define_cs_enum_wrapper_reverse.html" title="macro capstone::define_cs_enum_wrapper_reverse">define_<wbr>cs_<wbr>enum_<wbr>wrapper_<wbr>reverse</a></dt><dd>Define Rust enum that is created from C enum</dd><dt><a class="macro" href="macro.define_impl_bitmask.html" title="macro capstone::define_impl_bitmask">define_<wbr>impl_<wbr>bitmask</a></dt><dd>Defines getters for a bitmask</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Capstone.html" title="struct capstone::Capstone">Capstone</a></dt><dd>An instance of the capstone disassembler</dd><dt><a class="struct" href="struct.DisasmIter.html" title="struct capstone::DisasmIter">Disasm<wbr>Iter</a></dt><dd>Structure to handle iterative disassembly.</dd><dt><a class="struct" href="struct.EmptyExtraModeIter.html" title="struct capstone::EmptyExtraModeIter">Empty<wbr>Extra<wbr>Mode<wbr>Iter</a></dt><dd>Represents an empty set of <code>ExtraMode</code>.</dd><dt><a class="struct" href="struct.Insn.html" title="struct capstone::Insn">Insn</a></dt><dd>A single disassembled CPU instruction.</dd><dt><a class="struct" href="struct.InsnDetail.html" title="struct capstone::InsnDetail">Insn<wbr>Detail</a></dt><dd>Contains architecture-independent details about an <a href="struct.Insn.html" title="struct capstone::Insn"><code>Insn</code></a>.</dd><dt><a class="struct" href="struct.InsnGroupId.html" title="struct capstone::InsnGroupId">Insn<wbr>Group<wbr>Id</a></dt><dd>Represents the group an instruction belongs to, which may be architecture-specific.</dd><dt><a class="struct" href="struct.InsnId.html" title="struct capstone::InsnId">InsnId</a></dt><dd>Represents an instruction id, which may be architecture-specific.</dd><dt><a class="struct" href="struct.Instructions.html" title="struct capstone::Instructions">Instructions</a></dt><dd>Represents a slice of <a href="struct.Insn.html" title="struct capstone::Insn"><code>Insn</code></a> returned by <a href="struct.Capstone.html" title="struct capstone::Capstone"><code>Capstone</code></a> <code>disasm*()</code> methods.</dd><dt><a class="struct" href="struct.OwnedInsn.html" title="struct capstone::OwnedInsn">Owned<wbr>Insn</a></dt><dd>A single disassembled CPU instruction that lives on the Rust heap.</dd><dt><a class="struct" href="struct.RegAccessRef.html" title="struct capstone::RegAccessRef">RegAccess<wbr>Ref</a></dt><dt><a class="struct" href="struct.RegId.html" title="struct capstone::RegId">RegId</a></dt><dd>Represents an register id, which is architecture-specific.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.AccessType.html" title="enum capstone::AccessType">Access<wbr>Type</a></dt><dd>Represents how the operand is accessed.</dd><dt><a class="enum" href="enum.Arch.html" title="enum capstone::Arch">Arch</a></dt><dd>Architectures for the disassembler</dd><dt><a class="enum" href="enum.Endian.html" title="enum capstone::Endian">Endian</a></dt><dd>Disassembler endianness</dd><dt><a class="enum" href="enum.Error.html" title="enum capstone::Error">Error</a></dt><dd>An error enum for this library</dd><dt><a class="enum" href="enum.ExtraMode.html" title="enum capstone::ExtraMode">Extra<wbr>Mode</a></dt><dd>Extra modes or features that can be enabled with some modes</dd><dt><a class="enum" href="enum.Mode.html" title="enum capstone::Mode">Mode</a></dt><dd>Disassembler modes</dd><dt><a class="enum" href="enum.Syntax.html" title="enum capstone::Syntax">Syntax</a></dt><dd>Disassembly syntax</dd></dl><h2 id="statics" class="section-header">Statics<a href="#statics" class="anchor">§</a></h2><dl class="item-table"><dt><a class="static" href="static.NO_EXTRA_MODE.html" title="static capstone::NO_EXTRA_MODE">NO_<wbr>EXTRA_<wbr>MODE</a></dt><dd>Represents that no extra modes are enabled. Can be passed to <code>Capstone::new_raw()</code> as the
+<code>extra_mode</code> argument.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.EnumList.html" title="trait capstone::EnumList">Enum<wbr>List</a></dt><dd>A C-like enum can list its variants</dd></dl><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><dl class="item-table"><dt><a class="type" href="type.CsResult.html" title="type capstone::CsResult">CsResult</a></dt><dt><a class="type" href="type.InsnGroupIdInt.html" title="type capstone::InsnGroupIdInt">Insn<wbr>Group<wbr>IdInt</a></dt><dd>Integer type used in <code>InsnGroupId</code></dd><dt><a class="type" href="type.InsnIdInt.html" title="type capstone::InsnIdInt">Insn<wbr>IdInt</a></dt><dd>Integer type used in <code>InsnId</code></dd><dt><a class="type" href="type.RegAccessType.html" title="type capstone::RegAccessType">RegAccess<wbr>Type</a></dt><dd>Previously the enum was called RegAccessType, see issue #135
+Maintain compatibility with legacy code</dd><dt><a class="type" href="type.RegIdInt.html" title="type capstone::RegIdInt">RegId<wbr>Int</a></dt><dd>Integer type used in <code>RegId</code></dd></dl></section></div></main></body></html>

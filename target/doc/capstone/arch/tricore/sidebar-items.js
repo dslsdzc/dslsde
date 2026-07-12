@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ArchExtraMode","ArchMode","ArchSyntax","TriCoreInsn","TriCoreOperand"],"mod":["TriCoreInsnGroup","TriCoreReg"],"struct":["ArchCapstoneBuilder","TriCoreInsnDetail","TriCoreOpMem","TriCoreOperandIterator"]};
