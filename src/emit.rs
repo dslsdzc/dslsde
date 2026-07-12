@@ -6,7 +6,7 @@ use crate::types::{VarType, infer_var_type};
 use crate::ssa::SsaContext;
 
 impl InferenceEngine {
-    pub(crate) fn build_addr_map(&self, state: &State, _ssa: &SsaContext) -> HashMap<u64, String> {
+    pub(crate) fn build_addr_map(&self, state: &State, ssa: &SsaContext) -> HashMap<u64, String> {
 
         // Pass 1: collect patterns for variable naming
         #[derive(Default)]
@@ -91,15 +91,16 @@ impl InferenceEngine {
         // Pass 2: generate output
         let mut m: HashMap<u64, String> = HashMap::new();
         let mut rv: HashMap<String, String> = HashMap::new();
-        // 寄存器→全局符号 映射（rg），让条件能用符号名
+        // 寄存器→全局符号 映射（rg），从 SSA 构建
         let mut rg: HashMap<String, String> = HashMap::new();
-        for stmt in &state.stmts {
-            if let Stmt::Assign { dst, val, .. } = stmt {
-                if let Some(r) = ro(dst) {
-                    if let ValueDomain::Pointer(addr) = val {
-                        let name = if let Some(n) = self.got_map.get(addr) { n.clone() }
-                                    else { format!("global_{:#x}", addr) };
-                        rg.insert(r.to_string(), name);
+        for (&addr, &sid) in &state.ssa_ids {
+            if let Some(v) = ssa.get(sid) {
+                if let Some(r) = ro(&v.reg) {
+                    let desc = ssa.value_desc(sid);
+                    // value_desc 返回 "global_0x..." 或者 "phi(...)" 等
+                    // 不存储 SSA 版本名（rdx_1），只存解析后的值
+                    if !desc.starts_with(&v.reg) && !desc.starts_with("phi") {
+                        rg.insert(r.to_string(), desc);
                     }
                 }
             }

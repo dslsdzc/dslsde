@@ -10,6 +10,7 @@ impl InferenceEngine {
         let mut regs = HashMap::new();
         for (i, v) in args.iter().enumerate().take(6) { regs.insert(aregs[i].to_string(), ValueDomain::Signed(*v)); }
         let mut stmts = Vec::new(); let mut stack: HashMap<i64, ValueDomain> = HashMap::new();
+        let mut ssa_ids: HashMap<u64, u32> = HashMap::new();
         for &(addr, sz, ref mn, ref op) in trace {
             let (dd, ss) = sp(op); let dst = strip_size(dd); let src = strip_size(ss); let is_md = so(dst).is_some();
             let stmt = if matches!(mn.as_str(), "call"|"callq") { self.make_call(addr, &regs, dst)
@@ -30,7 +31,8 @@ impl InferenceEngine {
                 // SSA: 记录寄存器写
                 if let Stmt::Assign { ref dst, ref val, .. } = stmt {
                     if let Some(r) = ro(dst) {
-                        ssa.write_reg(addr, 0, r, Some(val.clone()), SsaOp::Assign, vec![]);
+                        let sid = ssa.write_reg(addr, 0, r, Some(val.clone()), SsaOp::Assign, vec![]);
+                        ssa_ids.insert(addr, sid);
                     }
                 }
                 stmt
@@ -38,7 +40,8 @@ impl InferenceEngine {
                 let stmt = if is_md { self.make_arith_mem(addr, &mut regs, &mut stack, mn, dst, src) } else { self.make_arith(addr, &mut regs, &stack, mn, dst, src) };
                 if let Stmt::Assign { ref dst, ref val, .. } = stmt {
                     if let Some(r) = ro(dst) {
-                        ssa.write_reg(addr, 0, r, Some(val.clone()), SsaOp::BinOp(mn.clone()), vec![]);
+                        let sid = ssa.write_reg(addr, 0, r, Some(val.clone()), SsaOp::BinOp(mn.clone()), vec![]);
+                        ssa_ids.insert(addr, sid);
                     }
                 }
                 stmt
@@ -47,15 +50,15 @@ impl InferenceEngine {
                     if let Ok(re) = regex_lite::Regex::new(r"rip\s*([-+])\s*(0x[0-9a-fA-F]+)") { if let Some(caps) = re.captures(src) {
                         if let Ok(off) = i64::from_str_radix(caps[2].strip_prefix("0x").unwrap_or(&caps[2]), 16) {
                             let target = if &caps[1] == "+" { (addr as i64 + sz as i64 + off) as u64 } else { (addr as i64 + sz as i64 - off) as u64 };
-                            if let Some(s) = self.str_map.get(&target) { regs.insert(d.to_string(), ValueDomain::String(s.clone())); ssa.write_reg(addr, 0, d, Some(ValueDomain::String(s.clone())), SsaOp::Assign, vec![]); } else { regs.insert(d.to_string(), ValueDomain::Pointer(target)); ssa.write_reg(addr, 0, d, Some(ValueDomain::Pointer(target)), SsaOp::Assign, vec![]); }
+                            if let Some(s) = self.str_map.get(&target) { regs.insert(d.to_string(), ValueDomain::String(s.clone())); let sid = ssa.write_reg(addr, 0, d, Some(ValueDomain::String(s.clone())), SsaOp::Assign, vec![]); ssa_ids.insert(addr, sid); } else { regs.insert(d.to_string(), ValueDomain::Pointer(target)); let sid = ssa.write_reg(addr, 0, d, Some(ValueDomain::Pointer(target)), SsaOp::Assign, vec![]); ssa_ids.insert(addr, sid); }
                         }
                     }}}
-                } else { if let Some(d) = ro(dst) { ssa.write_reg(addr, 0, d, Some(ValueDomain::Pointer(0)), SsaOp::Assign, vec![]); } regs.insert(dst.to_string(), ValueDomain::Pointer(0)); } Stmt::Nop
+                } else { if let Some(d) = ro(dst) { let sid = ssa.write_reg(addr, 0, d, Some(ValueDomain::Pointer(0)), SsaOp::Assign, vec![]); ssa_ids.insert(addr, sid); } regs.insert(dst.to_string(), ValueDomain::Pointer(0)); } Stmt::Nop
             } else if matches!(mn.as_str(), "push"|"pop"|"endbr64"|"endbr32"|"nop"|"nopq"|"xchg"|"cqo"|"cdqe"|"cdq"|"rep"|"repz"|"repnz"|"stos"|"stosb"|"stosd"|"stosq"|"movs"|"movsb"|"retf"|"iret"|"syscall"|"sysenter"|"int3") { Stmt::Nop
             } else if mn.starts_with("cmov") { Stmt::Nop } else { Stmt::Comment(addr, format!("{} {}", mn, op)) };
             stmts.push(stmt);
         }
-        State { stmts, regs, stack, changed: false, iteration: 0, addr_map: HashMap::new() }
+        State { stmts, regs, stack, changed: false, iteration: 0, addr_map: HashMap::new(), ssa_ids }
     }
     pub(crate) fn make_call(&self, addr: u64, regs: &HashMap<String, ValueDomain>, dst: &str) -> Stmt {
         let name = resolve_call_name(dst, 0, 0, &self.got_map, &self.func_map, &self.plt_map);

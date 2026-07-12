@@ -16,6 +16,7 @@ pub struct State {
     pub stmts: Vec<Stmt>, pub regs: HashMap<String, ValueDomain>,
     pub stack: HashMap<i64, ValueDomain>, pub changed: bool, pub iteration: u32,
     pub addr_map: HashMap<u64, String>,
+    pub ssa_ids: HashMap<u64, u32>,
 }
 
 impl Stmt {
