@@ -4,6 +4,7 @@ pub mod insn;
 pub mod cgen;
 pub mod infer;
 pub mod cfg;
+pub mod types;
 
 use pyo3::prelude::*;
 
