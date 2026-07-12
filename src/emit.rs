@@ -200,25 +200,59 @@ impl InferenceEngine {
         let first = *trace.iter().min().unwrap_or(&0); let entry = cfg.blocks.keys().filter(|&&k| k <= first).last().copied().unwrap_or(cfg.entry);
         let loops = cfg.find_natural_loops();
         let loop_headers: HashSet<u64> = loops.iter().map(|l| l.header).collect();
-        self.emit_block(entry, cfg, &state.addr_map, trace, &mut visited, &mut consumed, 0, &mut out, &loop_headers); out.join("\n")
+
+        // 收集变量首次赋值地址 → 提到函数顶部做声明
+        let mut first_assign: HashMap<String, u64> = HashMap::new();
+        for (&a, line) in &state.addr_map {
+            if let Some(eq) = line.find(" = ") {
+                let name = line[..eq].trim();
+                if (name.starts_with('v') || name.starts_with("arg_") || name == "i" || name == "n" || name == "sum")
+                    && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                    && !first_assign.contains_key(name)
+                {
+                    first_assign.insert(name.to_string(), a);
+                }
+            }
+        }
+        // 输出变量声明块
+        let mut var_names: Vec<&String> = first_assign.keys().collect();
+        var_names.sort();
+        if !var_names.is_empty() {
+            out.push(format!("int {};", var_names.iter().map(|n| n.as_str()).collect::<Vec<&str>>().join(", ")));
+        }
+
+        self.emit_block(entry, cfg, &state.addr_map, trace, &mut visited, &mut consumed, 0, &mut out, &loop_headers, &first_assign); out.join("\n")
     }
 
     pub(crate) fn emit_block(&self, addr: u64, cfg: &Cfg, lines: &HashMap<u64, String>, trace: &HashSet<u64>,
                   visited: &mut HashSet<u64>, consumed: &mut HashSet<u64>, depth: usize, out: &mut Vec<String>,
-                  loop_headers: &HashSet<u64>) {
+                  loop_headers: &HashSet<u64>, first_assign: &HashMap<String, u64>) {
         if addr == 0 || !cfg.blocks.contains_key(&addr) || visited.contains(&addr) { return; }
         visited.insert(addr);
         let block = &cfg.blocks[&addr];
         let has_lines = (block.addr..block.addr + block.size).any(|a| lines.contains_key(&a));
         let block_traced = (block.addr..block.addr + block.size).any(|a| trace.contains(&a));
         if !has_lines && !block_traced {
-            if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out, loop_headers); }
+            if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out, loop_headers, first_assign); }
             return;
         }
         let ind = "  ".repeat(depth);
-        for a in block.addr..block.addr + block.size { if let Some(line) = lines.get(&a) { if !consumed.contains(&a) { out.push(format!("{}{}", ind, line)); } } }
+        for a in block.addr..block.addr + block.size {
+            if let Some(line) = lines.get(&a) {
+                if !consumed.contains(&a) {
+                    // 跳过已在函数顶部声明的首次赋值
+                    let is_first = line.find(" = ").map_or(false, |eq| {
+                        let name = line[..eq].trim();
+                        first_assign.get(name).copied() == Some(a)
+                    });
+                    if !is_first {
+                        out.push(format!("{}{}", ind, line));
+                    }
+                }
+            }
+        }
         if block.succs.is_empty() { return; }
-        if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out, loop_headers); return; }
+        if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out, loop_headers, first_assign); return; }
         let t = block.succs[0]; let e = block.succs[1];
 
         // 回边 + 支配节点 → 循环识别
@@ -269,8 +303,8 @@ impl InferenceEngine {
         } else {
             let in_t = |x: u64| cfg.blocks.get(&x).map_or(false, |bl| (bl.addr..bl.addr + bl.size).any(|a| trace.contains(&a)));
             let taken = if in_t(e) { e } else { t }; let not_taken = if taken == t { e } else { t };
-            out.push(format!("{}{{", ind)); self.emit_block(taken, cfg, lines, trace, visited, consumed, depth + 1, out, loop_headers);
-            if not_taken != 0 && cfg.blocks.contains_key(&not_taken) && in_t(not_taken) { out.push(format!("{}}} else {{", ind)); self.emit_block(not_taken, cfg, lines, trace, visited, consumed, depth + 1, out, loop_headers); }
+            out.push(format!("{}{{", ind)); self.emit_block(taken, cfg, lines, trace, visited, consumed, depth + 1, out, loop_headers, first_assign);
+            if not_taken != 0 && cfg.blocks.contains_key(&not_taken) && in_t(not_taken) { out.push(format!("{}}} else {{", ind)); self.emit_block(not_taken, cfg, lines, trace, visited, consumed, depth + 1, out, loop_headers, first_assign); }
             out.push(format!("{}}}", ind));
         }
     }
