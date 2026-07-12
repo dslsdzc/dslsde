@@ -3,7 +3,7 @@ use crate::ir::*;
 use crate::infer::InferenceEngine;
 use crate::cfg::Cfg;
 use crate::types::{VarType, infer_var_type};
-use crate::ssa::SsaContext;
+use crate::ssa::{SsaContext, SsaOp};
 
 impl InferenceEngine {
     pub(crate) fn build_addr_map(&self, state: &State, ssa: &SsaContext) -> (HashMap<u64, String>, HashMap<String, String>) {
@@ -170,7 +170,24 @@ impl InferenceEngine {
                         };
                         m.insert(*addr, line);
                     } else if let Some(r) = ro(&dst) {
-                        // 寄存器赋值全跳过 — 不污染C输出
+                        // SSA 表达式传播：仅输出有语义的（GOT加载、BinOp）
+                        if let Some(&sid) = state.ssa_ids.get(addr) {
+                            if let Some(vv) = ssa.get(sid) {
+                                match &vv.op {
+                                    SsaOp::BinOp(name) => {
+                                        let ins: Vec<String> = vv.inputs.iter()
+                                            .map(|&i| ssa.value_name(i)).collect();
+                                        m.insert(*addr, format!("// {} = {} {}", ssa.value_name(sid), name, ins.join(", ")));
+                                    }
+                                    _ => {
+                                        let desc = ssa.value_desc(sid);
+                                        if !desc.starts_with(r) && !desc.contains("phi") {
+                                            m.insert(*addr, format!("// {} = {}", ssa.value_name(sid), desc));
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 Stmt::Branch { addr, cond, anno, .. } => {
