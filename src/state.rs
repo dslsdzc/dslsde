@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use crate::ir::*;
 use crate::infer::InferenceEngine;
+use crate::ssa::{SsaContext, SsaOp};
 
 impl InferenceEngine {
-    pub(crate) fn build_state(&self, trace: &[(u64, u32, String, String)], args: &[i64]) -> State {
+    pub(crate) fn build_state(&self, trace: &[(u64, u32, String, String)], args: &[i64],
+                              ssa: &mut SsaContext) -> State {
         let aregs = ["rdi","rsi","rdx","rcx","r8","r9"];
         let mut regs = HashMap::new();
         for (i, v) in args.iter().enumerate().take(6) { regs.insert(aregs[i].to_string(), ValueDomain::Signed(*v)); }
@@ -23,19 +25,32 @@ impl InferenceEngine {
                 } else { Stmt::Comment(addr, format!("cmp {}", op)) }
             } else if mn.starts_with('j') { let t = iv(dst_or_src(dst, src)).unwrap_or(0) as u64; if t == 0 { Stmt::Nop } else { Stmt::Branch { addr, cond: mn.clone(), target: t, anno: Annotation::None } }
             } else if mn.starts_with("mov") {
-                if src.contains("rip") { self.make_mov_rip(addr, sz, &mut regs, &mut stack, dst, src) }
-                else { self.make_assign(addr, &mut regs, &mut stack, dst, src) }
+                let stmt = if src.contains("rip") { self.make_mov_rip(addr, sz, &mut regs, &mut stack, dst, src) }
+                           else { self.make_assign(addr, &mut regs, &mut stack, dst, src) };
+                // SSA: 记录寄存器写
+                if let Stmt::Assign { ref dst, ref val, .. } = stmt {
+                    if let Some(r) = ro(dst) {
+                        ssa.write_reg(addr, 0, r, Some(val.clone()), SsaOp::Assign, vec![]);
+                    }
+                }
+                stmt
             } else if matches!(mn.as_str(), "add"|"sub"|"imul"|"xor"|"and"|"or") {
-                if is_md { self.make_arith_mem(addr, &mut regs, &mut stack, mn, dst, src) } else { self.make_arith(addr, &mut regs, &stack, mn, dst, src) }
+                let stmt = if is_md { self.make_arith_mem(addr, &mut regs, &mut stack, mn, dst, src) } else { self.make_arith(addr, &mut regs, &stack, mn, dst, src) };
+                if let Stmt::Assign { ref dst, ref val, .. } = stmt {
+                    if let Some(r) = ro(dst) {
+                        ssa.write_reg(addr, 0, r, Some(val.clone()), SsaOp::BinOp(mn.clone()), vec![]);
+                    }
+                }
+                stmt
             } else if mn == "lea" {
                 if let Some(d) = ro(dst) { if src.contains("rip") {
                     if let Ok(re) = regex_lite::Regex::new(r"rip\s*([-+])\s*(0x[0-9a-fA-F]+)") { if let Some(caps) = re.captures(src) {
                         if let Ok(off) = i64::from_str_radix(caps[2].strip_prefix("0x").unwrap_or(&caps[2]), 16) {
                             let target = if &caps[1] == "+" { (addr as i64 + sz as i64 + off) as u64 } else { (addr as i64 + sz as i64 - off) as u64 };
-                            if let Some(s) = self.str_map.get(&target) { regs.insert(d.to_string(), ValueDomain::String(s.clone())); } else { regs.insert(d.to_string(), ValueDomain::Pointer(target)); }
+                            if let Some(s) = self.str_map.get(&target) { regs.insert(d.to_string(), ValueDomain::String(s.clone())); ssa.write_reg(addr, 0, d, Some(ValueDomain::String(s.clone())), SsaOp::Assign, vec![]); } else { regs.insert(d.to_string(), ValueDomain::Pointer(target)); ssa.write_reg(addr, 0, d, Some(ValueDomain::Pointer(target)), SsaOp::Assign, vec![]); }
                         }
                     }}}
-                } else { regs.insert(dst.to_string(), ValueDomain::Pointer(0)); } Stmt::Nop
+                } else { if let Some(d) = ro(dst) { ssa.write_reg(addr, 0, d, Some(ValueDomain::Pointer(0)), SsaOp::Assign, vec![]); } regs.insert(dst.to_string(), ValueDomain::Pointer(0)); } Stmt::Nop
             } else if matches!(mn.as_str(), "push"|"pop"|"endbr64"|"endbr32"|"nop"|"nopq"|"xchg"|"cqo"|"cdqe"|"cdq"|"rep"|"repz"|"repnz"|"stos"|"stosb"|"stosd"|"stosq"|"movs"|"movsb"|"retf"|"iret"|"syscall"|"sysenter"|"int3") { Stmt::Nop
             } else if mn.starts_with("cmov") { Stmt::Nop } else { Stmt::Comment(addr, format!("{} {}", mn, op)) };
             stmts.push(stmt);

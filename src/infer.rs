@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use crate::ir::*;
 use crate::insn::PyInsnInfo;
 use crate::cfg::build_cfg_internal;
+use crate::ssa::{SsaContext, SsaOp};
 
 #[pyclass]
 pub struct InferenceEngine {
@@ -20,7 +21,9 @@ impl InferenceEngine {
     pub fn set_str_map(&mut self, m: HashMap<u64, String>) { self.str_map = m; }
     pub fn set_sig_map(&mut self, m: HashMap<String, (u32, bool)>) { self.sig_map = m; }
     pub fn infer(&mut self, trace: Vec<(u64, u32, String, String)>, args: Vec<i64>) -> String {
-        let mut state = self.build_state(&trace, &args);
+        let entry = trace.first().map(|t| t.0).unwrap_or(0);
+        let mut ssa = SsaContext::new(entry);
+        let mut state = self.build_state(&trace, &args, &mut ssa);
         for i in 0..5 {
             state.iteration = i; state.changed = false;
             self.pass_noise_filter(&mut state); self.pass_value_domain(&mut state);
@@ -30,14 +33,16 @@ impl InferenceEngine {
     }
     pub fn infer_structured(&mut self, trace: Vec<(u64, u32, String, String)>,
                             args: Vec<i64>, py_insns: Vec<PyRef<PyInsnInfo>>) -> String {
-        let mut state = self.build_state(&trace, &args);
+        let entry = trace.first().map(|t| t.0).unwrap_or(0);
+        let mut ssa = SsaContext::new(entry);
+        let mut state = self.build_state(&trace, &args, &mut ssa);
         for i in 0..5 {
             state.iteration = i; state.changed = false;
             self.pass_noise_filter(&mut state); self.pass_value_domain(&mut state);
             self.pass_constraint(&mut state); self.pass_arg_purify(&mut state);
             if !state.changed { break; }
         }
-        state.addr_map = self.build_addr_map(&state);
+        state.addr_map = self.build_addr_map(&state, &ssa);
         let native: Vec<PyInsnInfo> = py_insns.iter().map(|r| (*r).clone()).collect();
         let cfg = build_cfg_internal(&native);
         let trace_addrs: HashSet<u64> = trace.iter().map(|t| t.0).collect();

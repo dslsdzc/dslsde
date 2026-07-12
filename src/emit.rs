@@ -3,9 +3,10 @@ use crate::ir::*;
 use crate::infer::InferenceEngine;
 use crate::cfg::Cfg;
 use crate::types::{VarType, infer_var_type};
+use crate::ssa::SsaContext;
 
 impl InferenceEngine {
-    pub(crate) fn build_addr_map(&self, state: &State) -> HashMap<u64, String> {
+    pub(crate) fn build_addr_map(&self, state: &State, _ssa: &SsaContext) -> HashMap<u64, String> {
 
         // Pass 1: collect patterns for variable naming
         #[derive(Default)]

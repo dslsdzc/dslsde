@@ -7,6 +7,7 @@ pub mod types;
 pub mod ir;
 pub mod state;
 pub mod emit;
+pub mod ssa;
 pub mod infer;
 
 use pyo3::prelude::*;
