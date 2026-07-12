@@ -27,8 +27,10 @@ impl InferenceEngine {
                 }
             }
         }
-        // last_cmp 用于分支条件输出
-        let mut last_cmp = String::new();
+        // cmp_state 追踪最近一次比较，用于分支条件输出
+        #[derive(Default)]
+        struct CmpState { op1: String, op2: String }
+        let mut cmp_state: Option<CmpState> = None;
         // Pass 1.5: cmp 操作数 → 变量命名提示
         for stmt in &state.stmts {
             if let Stmt::Comment(_, c) = stmt {
@@ -106,10 +108,17 @@ impl InferenceEngine {
                 Stmt::Comment(ca, c) => {
                     if c.starts_with("cmp ") {
                         let cmp_trim = c[4..].trim();
-                        if let Some(parts) = cmp_trim.split_once(',').map(|(l,r)| format!("{},{}", l.trim(), r.trim())) {
-                            last_cmp = parts;
+                        // 将 [rip+X] 已解析的名字直接用于条件
+                        if let Some(parts) = cmp_trim.split_once(',') {
+                            let lhs_raw = strip_size(parts.0).trim().to_string();
+                            let rhs_raw = strip_size(parts.1).trim().to_string();
+                            let lhs = so_name(&lhs_raw, &vn, &rv);
+                            let rhs = so_name(&rhs_raw, &vn, &rv);
+                            let lhs = if lhs == lhs_raw { resolve_reg_global(&lhs_raw, &rv, &rg) } else { lhs };
+                            let rhs = if rhs == rhs_raw { resolve_reg_global(&rhs_raw, &rv, &rg) } else { rhs };
+                            cmp_state = Some(CmpState { op1: lhs, op2: rhs });
                         } else {
-                            last_cmp = cmp_trim.to_string();
+                            cmp_state = Some(CmpState { op1: cmp_trim.to_string(), op2: String::new() });
                         }
                     }
                     // 输出非trivial注释 (sub, sar, cmov等)
@@ -149,25 +158,16 @@ impl InferenceEngine {
                 Stmt::Branch { addr, cond, anno, .. } => {
                     if *anno != Annotation::None { continue; }
                     if matches!(cond.as_str(), "jmp"|"jmpq") { continue; }
-                    if last_cmp.is_empty() {
-                        m.insert(*addr, format!("if ({})", cstr(cond)));
-                    } else {
-                        let clean = last_cmp.replace("qword ptr ", "").replace("dword ptr ", "").replace("word ptr ", "").replace("byte ptr ", "");
-                        let parts: Vec<&str> = clean.splitn(2, ',').collect();
-                        if parts.len() == 2 {
-                            let lhs_raw = parts[0].trim();
-                            let rhs_raw = parts[1].trim();
-                            // 先用 so_name 解析栈变量名，查不到则查 rg（全局符号）
-                            let lhs = so_name(lhs_raw, &vn, &rv);
-                            let rhs = so_name(rhs_raw, &vn, &rv);
-                            let lhs = if lhs == lhs_raw { resolve_reg_global(lhs_raw, &rv, &rg) } else { lhs };
-                            let rhs = if rhs == rhs_raw { resolve_reg_global(rhs_raw, &rv, &rg) } else { rhs };
-                            m.insert(*addr, format!("if ({} {} {})", lhs, cstr(cond), rhs));
+                    let cond_str = if let Some(ref c) = cmp_state {
+                        if c.op2.is_empty() {
+                            format!("if ({})", c.op1)
                         } else {
-                            m.insert(*addr, format!("if ({} {})", clean, cstr(cond)));
+                            format!("if ({} {} {})", c.op1, cstr(cond), c.op2)
                         }
-                        last_cmp.clear();
-                    }
+                    } else {
+                        format!("if ({})", cstr(cond))
+                    };
+                    m.insert(*addr, cond_str);
                 }
                 Stmt::Call { addr, name, args, .. } => { let a: Vec<String> = args.iter().map(fmt_val).collect(); if !a.is_empty() { m.insert(*addr, format!("{}({});", name, a.join(", "))); } }
                 Stmt::Return { addr, val, .. } => { m.insert(*addr, format!("return {};", val.as_ref().map_or("?".into(), fmt_val))); }
@@ -196,27 +196,53 @@ impl InferenceEngine {
     pub(crate) fn emit_structured(&self, state: &State, cfg: &Cfg, trace: &HashSet<u64>) -> String {
         let mut out = Vec::new(); let mut visited = HashSet::new(); let mut consumed = HashSet::new();
         let first = *trace.iter().min().unwrap_or(&0); let entry = cfg.blocks.keys().filter(|&&k| k <= first).last().copied().unwrap_or(cfg.entry);
-        self.emit_block(entry, cfg, &state.addr_map, trace, &mut visited, &mut consumed, 0, &mut out); out.join("\n")
+        let loops = cfg.find_natural_loops();
+        let loop_headers: HashSet<u64> = loops.iter().map(|l| l.header).collect();
+        self.emit_block(entry, cfg, &state.addr_map, trace, &mut visited, &mut consumed, 0, &mut out, &loop_headers); out.join("\n")
     }
 
     pub(crate) fn emit_block(&self, addr: u64, cfg: &Cfg, lines: &HashMap<u64, String>, trace: &HashSet<u64>,
-                  visited: &mut HashSet<u64>, consumed: &mut HashSet<u64>, depth: usize, out: &mut Vec<String>) {
+                  visited: &mut HashSet<u64>, consumed: &mut HashSet<u64>, depth: usize, out: &mut Vec<String>,
+                  loop_headers: &HashSet<u64>) {
         if addr == 0 || !cfg.blocks.contains_key(&addr) || visited.contains(&addr) { return; }
         visited.insert(addr);
         let block = &cfg.blocks[&addr];
         let has_lines = (block.addr..block.addr + block.size).any(|a| lines.contains_key(&a));
         let block_traced = (block.addr..block.addr + block.size).any(|a| trace.contains(&a));
         if !has_lines && !block_traced {
-            // 跳过空块，但如果有单个后继则继续穿透
-            if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out); }
+            if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out, loop_headers); }
             return;
         }
         let ind = "  ".repeat(depth);
         for a in block.addr..block.addr + block.size { if let Some(line) = lines.get(&a) { if !consumed.contains(&a) { out.push(format!("{}{}", ind, line)); } } }
         if block.succs.is_empty() { return; }
-        if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out); return; }
+        if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out, loop_headers); return; }
         let t = block.succs[0]; let e = block.succs[1];
-        if t < addr || e < addr {
+
+        // 回边 + 支配节点 → 循环识别
+        let loop_target = if loop_headers.contains(&t) && t < addr { Some(t) }
+                         else if loop_headers.contains(&e) && e < addr { Some(e) }
+                         else { None };
+        if let Some(header) = loop_target {
+            // 循环：条件在 header 的 if 行中，身体为 header→addr 之间的块
+            let mut fc = String::new();
+            for a in block.addr..block.addr + block.size {
+                if let Some(line) = lines.get(&a) {
+                    if line.starts_with("if (") && line.ends_with(')') { fc = line[4..line.len()-1].to_string(); }
+                }
+            }
+            if !fc.is_empty() { out.push(format!("{}while ({}) {{", ind, fc)); }
+            else { out.push(format!("{}while (1) {{", ind)); }
+            // 输出循环体（从 entry 到 header 之前的块）
+            let mut c = header;
+            while c < addr && !visited.contains(&c) { visited.insert(c);
+                if let Some(b) = cfg.blocks.get(&c) {
+                    for a in b.addr..b.addr + b.size { if let Some(l) = lines.get(&a) { out.push(format!("{}{}", "  ".repeat(depth + 1), l)); } }
+                    if b.succs.len() == 1 { c = b.succs[0]; } else { break; }
+                } else { break; }
+            } out.push(format!("{}}}", ind));
+        } else if t < addr || e < addr {
+            // 后向边但非循环（旧代码保留的 fallback）
             let ls = t.min(e);
             let mut fc = String::new(); let mut fi = String::new();
             for a in block.addr..block.addr + block.size { if let Some(line) = lines.get(&a) { if line.starts_with("if (") && line.ends_with(')') { fc = line[4..line.len()-1].to_string(); } } }
@@ -241,8 +267,8 @@ impl InferenceEngine {
         } else {
             let in_t = |x: u64| cfg.blocks.get(&x).map_or(false, |bl| (bl.addr..bl.addr + bl.size).any(|a| trace.contains(&a)));
             let taken = if in_t(e) { e } else { t }; let not_taken = if taken == t { e } else { t };
-            out.push(format!("{}{{", ind)); self.emit_block(taken, cfg, lines, trace, visited, consumed, depth + 1, out);
-            if not_taken != 0 && cfg.blocks.contains_key(&not_taken) && in_t(not_taken) { out.push(format!("{}}} else {{", ind)); self.emit_block(not_taken, cfg, lines, trace, visited, consumed, depth + 1, out); }
+            out.push(format!("{}{{", ind)); self.emit_block(taken, cfg, lines, trace, visited, consumed, depth + 1, out, loop_headers);
+            if not_taken != 0 && cfg.blocks.contains_key(&not_taken) && in_t(not_taken) { out.push(format!("{}}} else {{", ind)); self.emit_block(not_taken, cfg, lines, trace, visited, consumed, depth + 1, out, loop_headers); }
             out.push(format!("{}}}", ind));
         }
     }
