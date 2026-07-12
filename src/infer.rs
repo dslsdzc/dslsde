@@ -42,11 +42,12 @@ impl InferenceEngine {
             self.pass_constraint(&mut state); self.pass_arg_purify(&mut state);
             if !state.changed { break; }
         }
-        state.addr_map = self.build_addr_map(&state, &ssa);
+        let (addr_map, var_types) = self.build_addr_map(&state, &ssa);
+        state.addr_map = addr_map;
         let native: Vec<PyInsnInfo> = py_insns.iter().map(|r| (*r).clone()).collect();
         let cfg = build_cfg_internal(&native);
         let trace_addrs: HashSet<u64> = trace.iter().map(|t| t.0).collect();
-        self.emit_structured(&state, &cfg, &trace_addrs)
+        self.emit_structured(&state, &cfg, &trace_addrs, &var_types)
     }
 }
 

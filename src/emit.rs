@@ -6,7 +6,17 @@ use crate::types::{VarType, infer_var_type};
 use crate::ssa::SsaContext;
 
 impl InferenceEngine {
-    pub(crate) fn build_addr_map(&self, state: &State, ssa: &SsaContext) -> HashMap<u64, String> {
+    pub(crate) fn build_addr_map(&self, state: &State, ssa: &SsaContext) -> (HashMap<u64, String>, HashMap<String, String>) {
+    fn type_str(vt: &VarType) -> &'static str {
+        match vt {
+            VarType::Ptr => "void*",
+            VarType::CharPtr => "char*",
+            VarType::Int => "int",
+            VarType::UInt => "unsigned",
+            VarType::Bool => "bool",
+            VarType::Unknown => "int",
+        }
+    }
 
         // Pass 1: collect patterns for variable naming
         #[derive(Default)]
@@ -77,14 +87,16 @@ impl InferenceEngine {
             }
         }
 
-        // Semantic naming
+        // Semantic naming + type mapping
         let mut vn: HashMap<i64, String> = HashMap::new();
+        let mut var_types: HashMap<String, String> = HashMap::new();
         for (&off, p) in &pats {
             let name: String = if p.from_arg && p.compared_high { "n".into() }
                 else if p.inc1 { "i".into() }
                 else if p.returned && !p.inc1 { "sum".into() }
                 else if p.from_arg { format!("arg_{}", -off) }
                 else { format!("v{}", pats.keys().filter(|&&k| k < off).count() + 1) };
+            var_types.insert(name.clone(), type_str(&p.vtype).to_string());
             vn.insert(off, name);
         }
 
@@ -92,15 +104,19 @@ impl InferenceEngine {
         let mut m: HashMap<u64, String> = HashMap::new();
         let mut rv: HashMap<String, String> = HashMap::new();
         // 寄存器→全局符号 映射（rg），从 SSA 构建
+        // 按地址排序以保持时序，只保留首次赋值
         let mut rg: HashMap<String, String> = HashMap::new();
-        for (&addr, &sid) in &state.ssa_ids {
-            if let Some(v) = ssa.get(sid) {
-                if let Some(r) = ro(&v.reg) {
-                    let desc = ssa.value_desc(sid);
-                    // value_desc 返回 "global_0x..." 或者 "phi(...)" 等
-                    // 不存储 SSA 版本名（rdx_1），只存解析后的值
-                    if !desc.starts_with(&v.reg) && !desc.starts_with("phi") {
-                        rg.insert(r.to_string(), desc);
+        let mut addrs: Vec<u64> = state.ssa_ids.keys().copied().collect();
+        addrs.sort();
+        for addr in addrs {
+            if let Some(&sid) = state.ssa_ids.get(&addr) {
+                if let Some(v) = ssa.get(sid) {
+                    if let Some(r) = ro(&v.reg) {
+                        if rg.contains_key(r) { continue; } // 保留首次
+                        let desc = ssa.value_desc(sid);
+                        if !desc.starts_with(&v.reg) && !desc.starts_with("phi") {
+                            rg.insert(r.to_string(), desc);
+                        }
                     }
                 }
             }
@@ -176,7 +192,7 @@ impl InferenceEngine {
                 _ => {}
             }
         }
-        m
+        (m, var_types)
     }
 
     pub(crate) fn emit_flat(&self, state: &State) -> String {
@@ -195,7 +211,8 @@ impl InferenceEngine {
         out.join("\n")
     }
 
-    pub(crate) fn emit_structured(&self, state: &State, cfg: &Cfg, trace: &HashSet<u64>) -> String {
+    pub(crate) fn emit_structured(&self, state: &State, cfg: &Cfg, trace: &HashSet<u64>,
+                                   var_types: &HashMap<String, String>) -> String {
         let mut out = Vec::new(); let mut visited = HashSet::new(); let mut consumed = HashSet::new();
         let first = *trace.iter().min().unwrap_or(&0); let entry = cfg.blocks.keys().filter(|&&k| k <= first).last().copied().unwrap_or(cfg.entry);
         let loops = cfg.find_natural_loops();
@@ -218,7 +235,18 @@ impl InferenceEngine {
         let mut var_names: Vec<&String> = first_assign.keys().collect();
         var_names.sort();
         if !var_names.is_empty() {
-            out.push(format!("int {};", var_names.iter().map(|n| n.as_str()).collect::<Vec<&str>>().join(", ")));
+            // 按类型分组: void* v1; int arg_152, v2, v3;
+            let mut by_type: HashMap<&str, Vec<&String>> = HashMap::new();
+            for name in &var_names {
+                let t = var_types.get(name.as_str()).map(|s| s.as_str()).unwrap_or("int");
+                by_type.entry(t).or_default().push(name);
+            }
+            let mut keys: Vec<&&str> = by_type.keys().collect();
+            keys.sort();
+            for t in keys {
+                let names = &by_type[t];
+                out.push(format!("{} {};", t, names.iter().map(|n| n.as_str()).collect::<Vec<&str>>().join(", ")));
+            }
         }
 
         self.emit_block(entry, cfg, &state.addr_map, trace, &mut visited, &mut consumed, 0, &mut out, &loop_headers, &first_assign); out.join("\n")
