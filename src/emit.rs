@@ -18,19 +18,50 @@ impl InferenceEngine {
         }
     }
 
-        // Pass 1: collect patterns for variable naming
+        // Pass 1: collect patterns for variable naming + type inference
         #[derive(Default)]
         struct Pat { from_arg: bool, inc1: bool, compared_low: bool, compared_high: bool, returned: bool, vtype: VarType }
+        // 寄存器→最新 SSA id（用于栈变量反查类型）
+        let mut reg_latest: HashMap<String, u32> = HashMap::new();
+        for (&a, &sid) in &state.ssa_ids {
+            if let Some(v) = ssa.get(sid) {
+                reg_latest.insert(v.reg.clone(), sid);
+            }
+        }
         let mut pats: HashMap<i64, Pat> = HashMap::new();
         for stmt in &state.stmts {
-            if let Stmt::Assign { dst, info, anno, .. } = stmt {
+            if let Stmt::Assign { addr, dst, val, info, anno, .. } = stmt {
                 if *anno == Annotation::OverflowGuard { continue; }
                 if let Some(off) = so(dst) {
                     let p = pats.entry(off).or_default();
                     if matches!(info.as_str(), "rdi"|"rsi"|"rdx"|"rcx"|"r8"|"r9") { p.from_arg = true; }
-                    // Type inference
-                    if p.vtype == VarType::Unknown {
-                        if let Some(t) = infer_var_type(info) { p.vtype = t; }
+                    // Type inference: 值类型优先
+                    match val {
+                        ValueDomain::Pointer(_) => p.vtype = VarType::Ptr,
+                        ValueDomain::String(_) => p.vtype = VarType::CharPtr,
+                        ValueDomain::Signed(_) | ValueDomain::Unsigned(_) => {
+                            if p.vtype == VarType::Unknown {
+                                if let Some(t) = infer_var_type(info) { p.vtype = t; }
+                            }
+                        }
+                        _ => if p.vtype == VarType::Unknown {
+                            // Unknown → 查 SSA 是否有实际值（直接 addr 或源寄存器反查）
+                            let ssa_type = state.ssa_ids.get(addr).or_else(|| {
+                                // 栈写入: 源寄存器 → SSA id
+                                let canon = ro(info.trim()).unwrap_or(info);
+                                reg_latest.get(canon)
+                            }).and_then(|&sid| ssa.get(sid)).and_then(|sv| sv.val.as_ref());
+                            if let Some(sv_val) = ssa_type {
+                                match sv_val {
+                                    ValueDomain::Pointer(_) => p.vtype = VarType::Ptr,
+                                    ValueDomain::String(_) => p.vtype = VarType::CharPtr,
+                                    _ => {}
+                                }
+                            }
+                            if p.vtype == VarType::Unknown {
+                                if let Some(t) = infer_var_type(info) { p.vtype = t; }
+                            }
+                        }
                     }
                     if info.contains(' ') {
                         if info.split(' ').nth(1).unwrap_or("") == "1" { p.inc1 = true; }
