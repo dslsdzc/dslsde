@@ -6,6 +6,9 @@ use crate::insn::PyInsnInfo;
 #[derive(Clone, Debug, PartialEq)]
 pub enum ValueDomain { Unknown, Signed(i64), Unsigned(u64), Pointer(u64), Boolean, String(String) }
 #[derive(Clone, Debug, PartialEq)]
+pub enum VarType { Int, UInt, Ptr, CharPtr, Bool, Unknown }
+impl Default for VarType { fn default() -> Self { VarType::Unknown } }
+#[derive(Clone, Debug, PartialEq)]
 pub enum Annotation { None, BoundsCheck, NullCheck, OverflowGuard, SwitchDispatch, LoopBackEdge }
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stmt {
@@ -66,13 +69,25 @@ impl InferenceEngine {
 
         // Pass 1: collect patterns
         #[derive(Default)]
-        struct Pat { from_arg: bool, inc1: bool, compared_low: bool, compared_high: bool, returned: bool }
+        struct Pat { from_arg: bool, inc1: bool, compared_low: bool, compared_high: bool, returned: bool, vtype: VarType }
         let mut pats: HashMap<i64, Pat> = HashMap::new();
         for stmt in &state.stmts {
             if let Stmt::Assign { dst, val, info, anno, .. } = stmt {
                 if *anno == Annotation::OverflowGuard { continue; }
                 if let Some(off) = so(dst) {
                     let p = pats.entry(off).or_default();
+                        // Type inference
+                        if p.vtype == VarType::Unknown {
+                            if matches!(info.as_str(), "rdi"|"rsi"|"rdx"|"rcx"|"r8"|"r9") { p.vtype = VarType::Int; }
+                            if info.contains("*") || info.contains("imul") { p.vtype = VarType::Int; }
+                            if info.contains("lea") || info.contains("[rip") { p.vtype = VarType::Ptr; }
+                            if info.contains("strings") || info.contains("puts") || info.contains("printf") { p.vtype = VarType::CharPtr; }
+                        }
+                        // Type inference from stores
+                        let store_reg = info.as_str();
+                        if matches!(store_reg, "rdi"|"rsi"|"rdx"|"rcx"|"r8"|"r9") {}
+                        if info.contains("*") {}
+                        if info.contains("ptr") {}
                     if matches!(info.as_str(), "rdi"|"rsi"|"rdx"|"rcx") { p.from_arg = true; }
                     if info.contains(' ') {
                         let rest = info.split(' ').nth(1).unwrap_or("");
@@ -103,13 +118,16 @@ impl InferenceEngine {
 
         // Semantic naming
         let mut vn: HashMap<i64, String> = HashMap::new();
+        let mut vt: HashMap<i64, VarType> = HashMap::new();
         for (&off, p) in &pats {
-            let name: String = if p.from_arg && p.compared_high { "n".into() }
-                else if p.inc1 { "i".into() }
-                else if p.returned && !p.inc1 { "sum".into() }
+            let name: String = if p.from_arg && p.compared_high { format!("n") }
+                else if p.inc1 { format!("i") }
+                else if p.returned && !p.inc1 { format!("sum") }
                 else if p.from_arg { format!("arg_{}", -off) }
                 else { format!("v{}", pats.keys().filter(|&&k| k < off).count() + 1) };
             vn.insert(off, name.to_string());
+            vt.insert(off, p.vtype.clone());
+
         }
 
         // Pass 2: generate output
@@ -129,7 +147,7 @@ impl InferenceEngine {
                     let Some(name) = vn.get(&off) else { continue; };
                     let line = if info.contains(' ') {
                         let sp = info.find(' ').unwrap();
-                        format!("{} {}= {}", name, &info[..sp].trim(), &info[sp..].trim())
+                        format!("{} {}= {}", name, &info[..sp].trim(), resolve_reg(&info[sp..].trim(), &rv))
                     } else if matches!(info.as_str(), "rdi"|"rsi"|"rdx"|"rcx") {
                         format!("{} = {}", name, fmt_val(val))
                     } else {
@@ -173,29 +191,78 @@ impl InferenceEngine {
         out.join("\n")
     }
     fn emit_structured(&self, state: &State, cfg: &Cfg, trace: &HashSet<u64>) -> String {
-        let mut out = Vec::new(); let mut visited = HashSet::new();
+        let mut out = Vec::new(); let mut visited = HashSet::new(); let mut consumed = HashSet::new();
         let first = *trace.iter().min().unwrap_or(&0); let entry = cfg.blocks.keys().filter(|&&k| k <= first).last().copied().unwrap_or(cfg.entry);
-        self.emit_block(entry, cfg, &state.addr_map, trace, &mut visited, 0, &mut out); out.join("\n")
+        self.emit_block(entry, cfg, &state.addr_map, trace, &mut visited, &mut consumed, 0, &mut out); out.join("\n")
     }
-    fn emit_block(&self, addr: u64, cfg: &Cfg, lines: &HashMap<u64, String>, trace: &HashSet<u64>, visited: &mut HashSet<u64>, depth: usize, out: &mut Vec<String>) {
+    fn emit_block(&self, addr: u64, cfg: &Cfg, lines: &HashMap<u64, String>, trace: &HashSet<u64>, visited: &mut HashSet<u64>, consumed: &mut HashSet<u64>, depth: usize, out: &mut Vec<String>) {
         if addr == 0 || !cfg.blocks.contains_key(&addr) || visited.contains(&addr) { return; }
         visited.insert(addr); let ind = "  ".repeat(depth); let block = &cfg.blocks[&addr];
-        for a in block.addr..block.addr + block.size { if let Some(line) = lines.get(&a) { out.push(format!("{}{}", ind, line)); } }
+        for a in block.addr..block.addr + block.size { if let Some(line) = lines.get(&a) { if !consumed.contains(&a) { out.push(format!("{}{}", ind, line)); } } }
         if block.succs.is_empty() { return; }
-        if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, depth, out); return; }
+        if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out); return; }
         let t = block.succs[0]; let e = block.succs[1];
         if t < addr || e < addr {
-            let ls = t.min(e); out.push(format!("{}while (1) {{", ind));
+            let ls = t.min(e);
+            // Scan for for-loop pattern
+            let mut fc = String::new(); let mut fi = String::new();
+            for a in block.addr..block.addr + block.size {
+                if let Some(line) = lines.get(&a) {
+                    if line.starts_with("if (") && line.ends_with(')') {
+                        fc = line[4..line.len()-1].to_string();
+                    }
+                }
+            }
+            let mut bc = ls;
+            while bc < addr {
+                if let Some(b) = cfg.blocks.get(&bc) {
+                    for a in b.addr..b.addr + b.size {
+                        if let Some(l) = lines.get(&a) {
+                            if l.contains("+=") && l.len() < 20 { fi = l.trim().to_string(); }
+                        }
+                    }
+                    if b.succs.len() == 1 { bc = b.succs[0]; } else { break; }
+                } else { break; }
+            }
+            let mut finit = String::new();
+            if !fc.is_empty() && !fi.is_empty() {
+                let vname = fi.split(' ').next().unwrap_or(""); // "i" from "i += 1"
+                if !vname.is_empty() {
+                    for &pred in &cfg.blocks[&addr].preds {
+                        if pred == ls { continue; }
+                        if let Some(pb) = cfg.blocks.get(&pred) {
+                            for a in pb.addr..pb.addr + pb.size {
+                                if let Some(l) = lines.get(&a) {
+                                    if l.starts_with(vname) if l.starts_with(vname) && (l.contains("= 0") || l.contains("= 1")) {if l.starts_with(vname) && (l.contains("= 0") || l.contains("= 1")) { (l.contains("= 0") || l.contains("= 1")) { finit = l.split("//").next().unwrap_or("").trim().to_string();
+                                        finit = l.trim().to_string();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !fc.is_empty() && !fi.is_empty() {
+                if !finit.is_empty() { 
+                    // Track consumed init addresses
+                    for a in block.addr..block.addr + block.size {
+                        if let Some(l) = lines.get(&a) {
+                            if l.trim() == finit.trim() { consumed.insert(a); }
+                        }
+                    }
+                    out.push(format!("{}for ({}; {}; {}) {{", ind, finit.replace("// 0","").trim(), fc, fi)); 
+                } else { out.push(format!("{}for (; {}; {}) {{", ind, fc, fi)); }
+            } else { out.push(format!("{}for (;;) {{", ind)); }
             let mut c = ls; while c < addr && !visited.contains(&c) { visited.insert(c);
-                if let Some(b) = cfg.blocks.get(&c) { for a in b.addr..b.addr + b.size { if let Some(l) = lines.get(&a) { out.push(format!("{}{}", "  ".repeat(depth + 1), l)); } }
+                if let Some(b) = cfg.blocks.get(&c) { for a in b.addr..b.addr + b.size { if let Some(l) = lines.get(&a) { if !fi.is_empty() && l.trim() == fi.trim() { continue; } out.push(format!("{}{}", "  ".repeat(depth + 1), l)); } }
                     if b.succs.len() == 1 { c = b.succs[0]; } else { break; }
                 } else { break; }
             } out.push(format!("{}}}", ind));
         } else {
             let in_t = |x: u64| cfg.blocks.get(&x).map_or(false, |bl| (bl.addr..bl.addr + bl.size).any(|a| trace.contains(&a)));
             let taken = if in_t(e) { e } else { t }; let not_taken = if taken == t { e } else { t };
-            out.push(format!("{}{{", ind)); self.emit_block(taken, cfg, lines, trace, visited, depth + 1, out);
-            if not_taken != 0 && cfg.blocks.contains_key(&not_taken) && in_t(not_taken) { out.push(format!("{}}} else {{", ind)); self.emit_block(not_taken, cfg, lines, trace, visited, depth + 1, out); }
+            out.push(format!("{}{{", ind)); self.emit_block(taken, cfg, lines, trace, visited, consumed, depth + 1, out);
+            if not_taken != 0 && cfg.blocks.contains_key(&not_taken) && in_t(not_taken) { out.push(format!("{}}} else {{", ind)); self.emit_block(not_taken, cfg, lines, trace, visited, consumed, depth + 1, out); }
             out.push(format!("{}}}", ind));
         }
     }
@@ -238,7 +305,7 @@ impl InferenceEngine {
         Stmt::Call { addr, name, args }
     }
     fn make_assign(&self, addr: u64, regs: &mut HashMap<String, ValueDomain>, stack: &mut HashMap<i64, ValueDomain>, dst: &str, src: &str) -> Stmt {
-        if let Some(off) = so(dst) { if let Some(s) = ro(src) { let val = regs.get(s).cloned().unwrap_or(ValueDomain::Unknown); stack.insert(off, val.clone()); return Stmt::Assign { addr, dst: format!("[rbp{:+}]", off), val, info: s.to_string(), anno: Annotation::None }; } return Stmt::Nop; }
+        if let Some(off) = so(dst) { if let Some(s) = ro(src) { let val = regs.get(s).cloned().unwrap_or(ValueDomain::Unknown); stack.insert(off, val.clone()); return Stmt::Assign { addr, dst: format!("[rbp{:+}]", off), val, info: s.to_string(), anno: Annotation::None }; } if let Some(v) = iv(src) { let val = ValueDomain::Signed(v); stack.insert(off, val.clone()); return Stmt::Assign { addr, dst: format!("[rbp{:+}]", off), val, info: src.to_string(), anno: Annotation::None }; } return Stmt::Nop; }
         if let Some(off) = so(src) { if let Some(d) = ro(dst) { let val = stack.get(&off).cloned().unwrap_or(ValueDomain::Unknown); regs.insert(d.to_string(), val.clone()); return Stmt::Assign { addr, dst: d.to_string(), val, info: format!("[rbp{:+}]", off), anno: Annotation::None }; } return Stmt::Nop; }
         if let Some(d) = ro(dst) { if let Some(v) = iv(src) { let val = ValueDomain::Signed(v); regs.insert(d.to_string(), val.clone()); return Stmt::Assign { addr, dst: d.to_string(), val, info: src.to_string(), anno: Annotation::None }; } if let Some(s) = ro(src) { let val = regs.get(s).cloned().unwrap_or(ValueDomain::Unknown); regs.insert(d.to_string(), val); return Stmt::Nop; } }
         Stmt::Nop
@@ -291,6 +358,12 @@ impl InferenceEngine {
             }
         }
     }
+}
+
+fn resolve_reg(s: &str, rv: &HashMap<String, String>) -> String {
+    if let Some(name) = rv.get(s) { return name.clone(); }
+    if let Some(canon) = ro(s) { if let Some(name) = rv.get(canon) { return name.clone(); } }
+    s.to_string()
 }
 
 fn so_name(s: &str, vn: &HashMap<i64, String>, rv: &HashMap<String, String>) -> String {
