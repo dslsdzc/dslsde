@@ -2,9 +2,12 @@ pub mod flow;
 pub mod trace;
 pub mod insn;
 pub mod cgen;
-pub mod infer;
 pub mod cfg;
 pub mod types;
+pub mod ir;
+pub mod state;
+pub mod emit;
+pub mod infer;
 
 use pyo3::prelude::*;
 
