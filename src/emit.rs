@@ -349,6 +349,7 @@ impl InferenceEngine {
                             format!("if ({} {} {})", c.op1, cstr(cond), c.op2)
                         }
                     } else {
+                        // 无 cmp_state（QEMU trace）→ 显示原始条件
                         format!("if ({})", cstr(cond))
                     };
                     m.insert(*addr, cond_str);
