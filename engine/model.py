@@ -182,7 +182,8 @@ class Model:
                         if name: self._plt_map[addr] = name
         return self._plt_map
 
-    def run_function(self, func_addr: int, args: List[int] = None, timeout: float = 1.0) -> str:
+    def run_function(self, func_addr: int, args: List[int] = None, timeout: float = 1.0,
+                     engine: str = "unicorn") -> str:
         if self.binary is None: return "// no binary loaded"
         if args is None:
             func = None
@@ -202,10 +203,15 @@ class Model:
         for alt in [[0]*6, [1]*6, [9999]*6]:
             if alt != args and alt != [0]*6:  # 避免重复
                 pass
-        # 默认只跑一次，后续可扩展多参数
-        runner = Runner(self.binary)
-        raw_trace = runner.run(func_addr, args=args, timeout=timeout)
-        runner.close()
+        # 选择执行引擎（unicorn / qemu）
+        if engine == "qemu":
+            from engine.dynamic.qemu_runner import QemuRunner
+            runner = QemuRunner(self._path)
+            raw_trace = runner.run(func_addr, args=args, timeout=timeout)
+        else:
+            runner = Runner(self.binary)
+            raw_trace = runner.run(func_addr, args=args, timeout=timeout)
+            runner.close()
         if not raw_trace: return "// (no trace)"
 
         # 合并所有 trace（去重）
@@ -247,6 +253,9 @@ class Model:
                         if s: str_map[ta] = s
 
         ie = dslsde_core.InferenceEngine()
+        # 传递二进制数据（用于 switch 恢复等）
+        with open(self._path, 'rb') as _f:
+            ie.set_binary(_f.read(), self.binary.exec_segments[0].addr)
         from engine.sigs import get_sig_map
         ie.set_sig_map(get_sig_map())
         fm = {f.addr: f.name for f in self.functions if f.name}

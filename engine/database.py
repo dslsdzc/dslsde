@@ -6,7 +6,18 @@
 
 from __future__ import annotations
 import sqlite3
+import ctypes
 from typing import List, Optional, Any
+
+# 地址转换：SQLite INTEGER 是 signed 64-bit
+# 内核地址 (0xffffffff80000000+) 需转 signed 存储
+def _s64(addr: int) -> int:
+    """int → SQLite-safe signed 64-bit"""
+    return ctypes.c_int64(addr).value
+
+def _u64(addr: int) -> int:
+    """SQLite 读出值 → unsigned 64-bit"""
+    return ctypes.c_uint64(addr).value
 
 from engine.loader import Segment, Symbol
 from engine.function import Function
@@ -90,26 +101,26 @@ class Database:
     def save_segments(self, segments: List[Segment]):
         self.conn.executemany(
             "INSERT OR REPLACE INTO segments (addr, name, size, flags) VALUES (?, ?, ?, ?)",
-            [(s.addr, s.name, s.size, s.flags) for s in segments],
+            [(_s64(s.addr), s.name, s.size, s.flags) for s in segments],
         )
         self.conn.commit()
 
     def load_segments(self) -> List[Segment]:
         rows = self.conn.execute("SELECT * FROM segments ORDER BY addr").fetchall()
-        return [Segment(r["addr"], r["name"], r["size"], b"", r["flags"]) for r in rows]
+        return [Segment(_u64(r["addr"]), r["name"], r["size"], b"", r["flags"]) for r in rows]
 
     # ── symbols ──
 
     def save_symbols(self, symbols: List[Symbol]):
         self.conn.executemany(
             "INSERT OR REPLACE INTO symbols (addr, name, size, type) VALUES (?, ?, ?, ?)",
-            [(s.addr, s.name, s.size, s.typ) for s in symbols],
+            [(_s64(s.addr), s.name, s.size, s.typ) for s in symbols],
         )
         self.conn.commit()
 
     def load_symbols(self) -> List[Symbol]:
         rows = self.conn.execute("SELECT * FROM symbols ORDER BY addr").fetchall()
-        return [Symbol(r["name"], r["addr"], r["size"], r["type"]) for r in rows]
+        return [Symbol(r["name"], _u64(r["addr"]), r["size"], r["type"]) for r in rows]
 
     # ── instructions ──
 
@@ -118,7 +129,7 @@ class Database:
         rows = []
         for i in insns:
             typ = _classify_mnemonic(i.mnemonic)
-            rows.append((i.addr, i.size, i.mnemonic, i.operands,
+            rows.append((_s64(i.addr), i.size, i.mnemonic, i.operands,
                          bytes(i.bytes), typ))
         self.conn.executemany(
             "INSERT OR REPLACE INTO instructions (addr, size, mnemonic, operands, bytes, type) VALUES (?, ?, ?, ?, ?, ?)",
@@ -128,7 +139,7 @@ class Database:
 
     def save_instructions(self, insns: List[Insn]):
         rows = [
-            (i.addr, i.size, i.mnemonic, i.operands, i.bytes, _classify_insn(i.mnemonic))
+            (_s64(i.addr), i.size, i.mnemonic, i.operands, i.bytes, _classify_insn(i.mnemonic))
             for i in insns
         ]
         self.conn.executemany(
@@ -140,34 +151,41 @@ class Database:
     def load_instructions(self, start: int, end: int) -> List[Dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM instructions WHERE addr >= ? AND addr < ? ORDER BY addr",
-            (start, end),
+            (_s64(start), _s64(end)),
         ).fetchall()
-        return [dict(r) for r in rows]
+        result = [dict(r) for r in rows]
+        for row in result:
+            row["addr"] = _u64(row["addr"])
+        return result
 
     def get_instruction(self, addr: int) -> Optional[Dict[str, Any]]:
         row = self.conn.execute(
-            "SELECT * FROM instructions WHERE addr = ?", (addr,)
+            "SELECT * FROM instructions WHERE addr = ?", (_s64(addr),)
         ).fetchone()
-        return dict(row) if row else None
+        if row:
+            d = dict(row)
+            d["addr"] = _u64(d["addr"])
+            return d
+        return None
 
     # ── functions ──
 
     def save_functions(self, funcs: List[Function]):
         self.conn.executemany(
             "INSERT OR REPLACE INTO functions (addr, name, size, type, insn_count) VALUES (?, ?, ?, ?, ?)",
-            [(f.addr, f.name, f.size, f.typ, f.insn_count) for f in funcs],
+            [(_s64(f.addr), f.name, f.size, f.typ, f.insn_count) for f in funcs],
         )
         self.conn.commit()
 
     def load_functions(self) -> List[Function]:
         rows = self.conn.execute("SELECT * FROM functions ORDER BY addr").fetchall()
         return [
-            Function(r["addr"], r["size"], r["name"], r["type"], r["insn_count"] or 0)
+            Function(_u64(r["addr"]), r["size"], r["name"], r["type"], r["insn_count"] or 0)
             for r in rows
         ]
 
     def function_exists(self, addr: int) -> bool:
-        row = self.conn.execute("SELECT 1 FROM functions WHERE addr = ?", (addr,)).fetchone()
+        row = self.conn.execute("SELECT 1 FROM functions WHERE addr = ?", (_s64(addr),)).fetchone()
         return row is not None
 
     # ── xrefs ──
