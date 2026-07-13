@@ -6,6 +6,7 @@ use crate::types::{VarType, type_to_vartype, infer_var_type};
 use crate::ssa::{SsaContext, SsaOp};
 use crate::switch::JumpTable;
 use crate::typeprop;
+use crate::deobfuscate::DeobfuscatedInfo;
 
 impl InferenceEngine {
     pub(crate) fn build_addr_map(&self, state: &State, ssa: &SsaContext) -> (HashMap<u64, String>, HashMap<String, String>) {
@@ -397,7 +398,66 @@ impl InferenceEngine {
 
     pub(crate) fn emit_structured(&self, state: &State, cfg: &Cfg, trace: &HashSet<u64>,
                                    var_types: &HashMap<String, String>,
-                                   jump_tables: &[JumpTable]) -> String {
+                                   jump_tables: &[JumpTable],
+                                   deobf: &DeobfuscatedInfo) -> String {
+        // CFF 反混淆: 用 k-switch 块顺序替换原始 CFG 遍历
+        if let Some(ref disp) = deobf.dispatcher {
+            let mut out = Vec::new();
+            let mut consumed: HashSet<u64> = HashSet::new();
+            // 声明块
+            let mut first_assign: HashMap<String, u64> = HashMap::new();
+            let mut canary_vars: HashSet<String> = HashSet::new();
+            for (&a, line) in &state.addr_map {
+                if let Some(eq) = line.find(" = ") {
+                    let name = line[..eq].trim();
+                    if (name.starts_with('v') || name.starts_with("arg_") || name == "i" || name == "sum")
+                        && !first_assign.contains_key(name)
+                    {
+                        if !line.starts_with("//") {
+                            first_assign.insert(name.to_string(), a);
+                        } else {
+                            canary_vars.insert(name.to_string());
+                        }
+                    }
+                }
+            }
+            let mut var_names: Vec<&String> = first_assign.keys().collect();
+            var_names.sort();
+            if !var_names.is_empty() {
+                let mut by_type: HashMap<&str, Vec<&String>> = HashMap::new();
+                for name in &var_names {
+                    let t = var_types.get(name.as_str()).map(|s| s.as_str()).unwrap_or("int");
+                    by_type.entry(t).or_default().push(name);
+                }
+                let mut keys: Vec<&&str> = by_type.keys().collect();
+                keys.sort();
+                for t in keys {
+                    let names = &by_type[t];
+                    out.push(format!("{} {};", t, names.iter().map(|n| n.as_str()).collect::<Vec<&str>>().join(", ")));
+                }
+            }
+            // 按 k-switch 块顺序输出
+            let ind = "  ";
+            for &baddr in &deobf.block_order {
+                if let Some(block) = cfg.blocks.get(&baddr) {
+                    for a in block.addr..block.addr + block.size {
+                        if let Some(line) = state.addr_map.get(&a) {
+                            if !consumed.contains(&a) {
+                                // 跳过声明行
+                                let is_decl = line.find(" = ").map_or(false, |eq| {
+                                    first_assign.get(line[..eq].trim()).copied() == Some(a)
+                                });
+                                if !is_decl {
+                                    out.push(format!("{}{}", ind, line));
+                                }
+                                consumed.insert(a);
+                            }
+                        }
+                    }
+                }
+            }
+            return out.join("\n");
+        }
         let mut out = Vec::new(); let mut visited = HashSet::new(); let mut consumed = HashSet::new();
         let first = *trace.iter().min().unwrap_or(&0); let entry = cfg.blocks.keys().filter(|&&k| k <= first).last().copied().unwrap_or(cfg.entry);
         let loops = cfg.find_natural_loops();
