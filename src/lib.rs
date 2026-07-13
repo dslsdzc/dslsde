@@ -8,6 +8,11 @@ pub mod ir;
 pub mod state;
 pub mod emit;
 pub mod ssa;
+pub mod dce;
+pub mod switch;
+pub mod array;
+pub mod structr;
+pub mod typeflow;
 pub mod infer;
 
 use pyo3::prelude::*;
