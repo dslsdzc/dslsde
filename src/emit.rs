@@ -258,21 +258,28 @@ impl InferenceEngine {
                         };
                         m.insert(*addr, line);
                     } else if let Some(r) = ro(&dst) {
-                        // SSA 表达式传播：仅输出有语义的（GOT加载、BinOp）
+                        // SSA 注释：只输出有分析依据的，不输出来源不明的寄存器赋值
                         if let Some(&sid) = state.ssa_ids.get(addr) {
                             if let Some(vv) = ssa.get(sid) {
-                                match &vv.op {
-                                    SsaOp::BinOp(name) => {
-                                        let ins: Vec<String> = vv.inputs.iter()
-                                            .map(|&i| ssa.value_name(i)).collect();
-                                        m.insert(*addr, format!("// {} = {} {}", ssa.value_name(sid), name, ins.join(", ")));
-                                    }
-                                    _ => {
-                                        let desc = ssa.value_desc(sid);
-                                        if !desc.starts_with(r) && !desc.contains("phi") {
-                                            m.insert(*addr, format!("// {} = {}", ssa.value_name(sid), desc));
+                                let desc = ssa.value_desc(sid);
+                                // 规则：只保留 Pointer 值（GOT加载/金丝雀）和 BinOp
+                                let keep = match &vv.op {
+                                    SsaOp::BinOp(_) => true,          // 算术结果
+                                    _ => desc.contains("global_")      // GOT/金丝雀加载
+                                      || desc.contains("__readfsqword")
+                                      || desc.starts_with("ptr_"),
+                                };
+                                if keep {
+                                    // 格式化: 说明值来源
+                                    let source = match &vv.op {
+                                        SsaOp::BinOp(name) => format!("{} {} {}", ssa.value_name(sid), name,
+                                            vv.inputs.iter().map(|&i| ssa.value_name(i)).collect::<Vec<_>>().join(", ")),
+                                        _ => {
+                                            if desc.contains("__readfsqword") { desc.clone() }
+                                            else { format!("{} <- {}", ssa.value_name(sid), desc) }
                                         }
-                                    }
+                                    };
+                                    m.insert(*addr, format!("// {}", source));
                                 }
                             }
                         }
