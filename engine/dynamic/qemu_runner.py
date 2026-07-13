@@ -1,98 +1,118 @@
-"""dslsde — QEMU 动态执行后端（可选）
+"""dslsde — QEMU 用户态 GDB 追踪
 
-处理 Unicorn 不支持的内核地址空间（0xffffffff80000000+）。
-需要用户安装 qemu-system-x86_64。
+原理: qemu-x86_64 -g PORT 启动 GDB stub
+      GDB 设置断点 → 单步 → 记录 trace
 
-使用:
-  runner = QemuRunner(binary)
-  trace = runner.run(func_addr, timeout=5.0)
+速度: ~1000 指令/秒 (比 qemu-system 快 10x)
 """
 
 import os
+import re
 import subprocess
 import tempfile
-import re
 import shutil
 from typing import List, Optional, Tuple
 
 
 class QemuRunner:
-    """QEMU 系统模式执行器——跟踪内核函数执行路径"""
-
     def __init__(self, binary_path: str):
-        self._binary_path = binary_path
-        self._qemu = shutil.which("qemu-system-x86_64")
-        self._available = self._qemu is not None
+        self._binary_path = os.path.abspath(binary_path)
+        self._qemu = shutil.which("qemu-x86_64")
+        self._gdb = shutil.which("gdb")
+        self._available = self._qemu is not None and self._gdb is not None
 
     @property
     def available(self) -> bool:
         return self._available
 
     def run(self, func_addr: int, args: List[int] = None,
-            timeout: float = 5.0) -> List[Tuple[int, int]]:
-        """在 QEMU 中跟踪函数执行"""
+            timeout: float = 10.0, max_insns: int = 5000,
+            argv: List[str] = None) -> List[Tuple[int, int, str, str]]:
+        """GDB 单步执行函数并返回 trace
+
+        argv: 传递给被调试程序的命令行参数（用于触发目标函数）
+        """
         if not self._available:
-            raise RuntimeError("qemu-system-x86_64 未安装")
+            raise RuntimeError("qemu-x86_64 or gdb not found")
 
-        # 创建 GDB 脚本来设置断点并开始执行
-        with tempfile.TemporaryDirectory() as tmpdir:
-            script = self._create_gdb_script(func_addr, timeout, tmpdir)
-            cmd = [
-                self._qemu, "-kernel", self._binary_path,
-                "-s", "-S",  # 等待 GDB 连接
-                "-nographic", "-serial", "none",
-                "-append", "console=ttyS0 quiet",
-                "-no-reboot",
-            ]
-            # 启动 QEMU（后台）
-            qemu_proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-            try:
-                # GDB 连接并获取 trace
-                gdb_out = subprocess.check_output(
-                    ["gdb", "-batch", "-x", script],
-                    timeout=timeout + 10,
-                    stderr=subprocess.STDOUT,
-                )
-                return self._parse_gdb_trace(gdb_out.decode())
-            except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
-                return []
-            finally:
-                qemu_proc.terminate()
-                try:
-                    qemu_proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    qemu_proc.kill()
-
-    def _create_gdb_script(self, func_addr: int, timeout: float,
-                           tmpdir: str) -> str:
-        """生成 GDB 脚本来跟踪执行"""
-        script_path = os.path.join(tmpdir, "gdb_script.gdb")
+        tmpdir = tempfile.mkdtemp()
         trace_file = os.path.join(tmpdir, "trace.txt")
-        with open(script_path, "w") as f:
-            f.write(f"""
-target remote :1234
-file {self._binary_path}
+        gdb_script = os.path.join(tmpdir, "gdb_cmd.gdb")
+
+        cmd_args = argv or []
+
+        # GDB 脚本: 在 _start 停下 → 设 RIP 为目标函数 → 单步
+        gdb_commands = f"""
 set pagination off
-# 设置断点在函数入口
+set confirm off
+set disassembly-flavor intel
+file {self._binary_path}
+target remote :1234
 break *{func_addr:#x}
+# 先到 _start
+break _start
 continue
-# 记录执行到返回的所有指令
+# 在 _start 处, 直接设 RIP 到目标函数
+set $rip = {func_addr:#x}
+# 设置栈指针 (用当前 RSP)
 set logging file {trace_file}
 set logging on
-stepi 200000
+stepi {max_insns}
 set logging off
 quit
-""")
-        return script_path
+"""
+        with open(gdb_script, "w") as f:
+            f.write(gdb_commands)
 
-    def _parse_gdb_trace(self, output: str) -> List[Tuple[int, int]]:
-        """解析 GDB 日志提取指令地址"""
-        trace = []
-        for line in output.splitlines():
-            m = re.match(r'^\s*(0x[0-9a-f]+):\s+', line)
+        # 启动 QEMU 用户态（等待 GDB）
+        qemu_cmd = [self._qemu, "-g", "1234", self._binary_path] + cmd_args
+        qemu_proc = subprocess.Popen(
+            qemu_cmd,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+        try:
+            # GDB 连接并执行脚本
+            subprocess.run(
+                [self._gdb, "-batch", "-x", gdb_script],
+                timeout=timeout, capture_output=True,
+            )
+        except subprocess.TimeoutExpired:
+            pass
+        finally:
+            qemu_proc.terminate()
+            try:
+                qemu_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                qemu_proc.kill()
+
+        # 解析 trace
+        trace = self._parse_trace(trace_file, func_addr)
+        return trace
+
+    def _parse_trace(self, path: str, func_addr: int) -> List[Tuple]:
+        """解析 GDB stepi 输出"""
+        if not os.path.exists(path):
+            return []
+        with open(path) as f:
+            content = f.read()
+
+        result = []
+        seen = set()
+        for line in content.split("\n"):
+            m = re.match(r'^\s*(0x[0-9a-f]+):\s+([0-9a-f ]+)\s+(.+)', line)
             if m:
                 addr = int(m.group(1), 16)
-                trace.append((addr, 0))
-        return trace
+                if addr in seen:
+                    continue
+                seen.add(addr)
+                hex_bytes = m.group(2).strip().replace(" ", "")
+                op_text = m.group(3).strip()
+                size = len(hex_bytes) // 2  # 字节数
+                # 提取 mnemonic 和 operands
+                parts = op_text.split(None, 1)
+                mn = parts[0] if parts else ""
+                op = parts[1] if len(parts) > 1 else ""
+                result.append((addr, size, mn, op))
+
+        return result
