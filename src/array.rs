@@ -71,3 +71,16 @@ pub fn group_by_base(accesses: &[ArrayAccess]) -> Vec<(String, Vec<ArrayAccess>)
     }
     groups
 }
+
+/// 将操作数字符串转为数组访问表示
+/// 例如 "[rax + rcx*8]" → Some("rax[rcx]")
+/// 同时支持完整指令 "mov rdx, [rax + rcx*8]" → Some("rax[rcx]")
+pub fn format_array_access(op: &str) -> Option<String> {
+    if let Some((base, idx, _scale)) = parse_mem_ref(op) {
+        return Some(format!("{}[{}]", base, idx));
+    }
+    if let Some((base, idx, _scale)) = parse_att_mem(op) {
+        return Some(format!("{}[{}]", base, idx));
+    }
+    None
+}

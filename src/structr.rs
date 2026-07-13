@@ -57,6 +57,29 @@ pub fn recover_struct(base_reg: &str, offsets: &[(i64, u32)]) -> Option<StructIn
     })
 }
 
+/// 检测操作数中的结构体字段访问模式
+/// 例如 "[rax + 0x10]" → Some(("rax", 16))
+/// 排除 [rbp+...] 和 [rip+...]（非结构体上下文）
+/// 仅返回小偏移 (< 256) 的固定偏移访问
+pub fn format_struct_access(op: &str) -> Option<(String, i64)> {
+    let re = regex_lite::Regex::new(r"\[(\w+)\s*\+\s*(0x[0-9a-fA-F]+|\d+)\]").ok()?;
+    let caps = re.captures(op)?;
+    let base = caps[1].to_string();
+    // 排除 rbp 和 rip（栈帧 / GOT，非结构体）
+    if base == "rbp" || base == "rip" { return None; }
+    let off_str = &caps[2];
+    let offset = if let Some(hex) = off_str.strip_prefix("0x") {
+        i64::from_str_radix(hex, 16).ok()?
+    } else {
+        off_str.parse::<i64>().ok()?
+    };
+    if offset > 0 && offset < 256 {
+        Some((base, offset))
+    } else {
+        None
+    }
+}
+
 /// 从数组访问转换到结构体推断
 /// 如果一个指针既有数组访问又有固定偏移访问 → 结构体数组
 pub fn struct_from_mixed(ptr_name: &str, offsets: &[i64], array_indices: &[i64]) -> Option<StructInfo> {

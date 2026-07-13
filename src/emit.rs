@@ -70,6 +70,12 @@ impl InferenceEngine {
                     if info.contains(' ') {
                         if info.split(' ').nth(1).unwrap_or("") == "1" { p.inc1 = true; }
                     }
+                    // 跨函数类型传播: rax 已知指针类型 → 变量也是指针
+                    if info == "rax" && p.vtype == VarType::Unknown {
+                        if let Some(ValueDomain::Pointer(_)) = state.regs.get("rax") {
+                            p.vtype = VarType::Ptr;
+                        }
+                    }
                 }
             }
         }
@@ -133,6 +139,45 @@ impl InferenceEngine {
                 else { format!("v{}", pats.keys().filter(|&&k| k < off).count() + 1) };
             var_types.insert(name.clone(), type_str(&p.vtype).to_string());
             vn.insert(off, name);
+        }
+
+        // Struct field inference: 检测连续对齐偏移 → 重命名为 field_N
+        {
+            let mut sorted_off: Vec<i64> = vn.keys().copied().collect();
+            sorted_off.sort();
+            let mut gs = 0usize;
+            for i in 1..sorted_off.len() {
+                let gap = (sorted_off[i] - sorted_off[i - 1]).abs();
+                if gap != 4 && gap != 8 {
+                    let cnt = i - gs;
+                    if cnt >= 2 {
+                        for j in 0..cnt {
+                            let off = sorted_off[gs + j];
+                            if let Some(old) = vn.get(&off).filter(|n| n.starts_with('v')).cloned() {
+                                let new = format!("field_{}", j);
+                                if let Some(t) = var_types.remove(&old) {
+                                    var_types.insert(new.clone(), t);
+                                }
+                                vn.insert(off, new);
+                            }
+                        }
+                    }
+                    gs = i;
+                }
+            }
+            let cnt = sorted_off.len() - gs;
+            if cnt >= 2 {
+                for j in 0..cnt {
+                    let off = sorted_off[gs + j];
+                    if let Some(old) = vn.get(&off).filter(|n| n.starts_with('v')).cloned() {
+                        let new = format!("field_{}", j);
+                        if let Some(t) = var_types.remove(&old) {
+                            var_types.insert(new.clone(), t);
+                        }
+                        vn.insert(off, new);
+                    }
+                }
+            }
         }
 
         // Pass 2: generate output
@@ -227,6 +272,26 @@ impl InferenceEngine {
                                     }
                                 }
                             }
+                        }
+                    }
+                    // 数组访问检测: info 中含 scaled-index → 格式化为 arr[idx]
+                    if let Some(arr_str) = crate::array::format_array_access(info) {
+                        m.insert(*addr, format!("// {} = {}", dst, arr_str));
+                    }
+                    // 数组访问检测: dst 含 scaled-index → 格式化为 arr[idx] = val
+                    if let Some(arr_str) = crate::array::format_array_access(dst) {
+                        m.insert(*addr, format!("{} = {}", arr_str, val_s(val, info)));
+                    }
+                    // 结构体字段检测: dst 为 [base + N] → 格式化为 base->field_N
+                    if dst.contains('[') && !dst.starts_with("[rbp") {
+                        if let Some((base, off)) = crate::structr::format_struct_access(dst) {
+                            m.insert(*addr, format!("{}->field_{:#x} = {}", base, off, val_s(val, info)));
+                        }
+                    }
+                    // 结构体字段检测: info 为 [base + N] → 格式化为 field 加载
+                    if info.contains('[') && !info.starts_with("[rbp") {
+                        if let Some((base, off)) = crate::structr::format_struct_access(info) {
+                            m.insert(*addr, format!("// {} = {}->field_{:#x}", dst, base, off));
                         }
                     }
                 }

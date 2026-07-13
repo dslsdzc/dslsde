@@ -38,14 +38,14 @@ impl InferenceEngine {
         let entry = trace.first().map(|t| t.0).unwrap_or(0);
         let mut ssa = SsaContext::new(entry);
         let mut state = self.build_state(&trace, &args, &mut ssa);
-        // 跨函数类型传播（在 passes 之前）
-        typeflow::propagate_types(&mut state, &self.sig_map);
         for i in 0..5 {
             state.iteration = i; state.changed = false;
             self.pass_noise_filter(&mut state); self.pass_value_domain(&mut state);
             self.pass_constraint(&mut state); self.pass_arg_purify(&mut state);
             if !state.changed { break; }
         }
+        // 跨函数类型传播（passes 之后，避免 passes 改写 stmts 后信息丢失）
+        typeflow::propagate_types(&mut state, &self.sig_map);
         // 死变量消除（移除无引用的寄存器赋值）
         let _dead = dce::eliminate(&mut state, &ssa);
         let (addr_map, var_types) = self.build_addr_map(&state, &ssa);
