@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::ir::*;
 use crate::infer::InferenceEngine;
 use crate::ssa::{SsaContext, SsaOp};
@@ -11,6 +11,7 @@ impl InferenceEngine {
         for (i, v) in args.iter().enumerate().take(6) { regs.insert(aregs[i].to_string(), ValueDomain::Signed(*v)); }
         let mut stmts = Vec::new(); let mut stack: HashMap<i64, ValueDomain> = HashMap::new();
         let mut ssa_ids: HashMap<u64, u32> = HashMap::new();
+        let mut canary_regs: HashSet<String> = HashSet::new();
         for &(addr, sz, ref mn, ref op) in trace {
             let (dd, ss) = sp(op); let dst = strip_size(dd); let src = strip_size(ss); let is_md = so(dst).is_some();
             let stmt = if matches!(mn.as_str(), "call"|"callq") { self.make_call(addr, &regs, dst)
@@ -26,7 +27,17 @@ impl InferenceEngine {
                 } else { Stmt::Comment(addr, format!("cmp {}", op)) }
             } else if mn.starts_with('j') { let t = iv(dst_or_src(dst, src)).unwrap_or(0) as u64; if t == 0 { Stmt::Nop } else { Stmt::Branch { addr, cond: mn.clone(), target: t, anno: Annotation::None } }
             } else if mn.starts_with("mov") {
-                let stmt = if src.contains("rip") { self.make_mov_rip(addr, sz, &mut regs, &mut stack, dst, src) }
+                // 寄存器覆写 → 清除金丝雀标记（除非本次就是 fs 加载）
+                if let Some(r) = ro(dst) { canary_regs.remove(r); }
+                let stmt = if op.contains("fs:0x28") || op.contains("fs:[0x28]") {
+                    // 栈金丝雀加载: mov reg, fs:[0x28]
+                    let val = ValueDomain::Pointer(0x28);
+                    if let Some(d) = ro(dst) {
+                        regs.insert(d.to_string(), val.clone());
+                        canary_regs.insert(d.to_string());
+                        Stmt::Assign { addr, dst: d.to_string(), val, info: "fs:[0x28]".to_string(), anno: Annotation::None }
+                    } else { Stmt::Nop }
+                } else if src.contains("rip") { self.make_mov_rip(addr, sz, &mut regs, &mut stack, dst, src) }
                            else { self.make_assign(addr, &mut regs, &mut stack, dst, src) };
                 // SSA: 记录寄存器写
                 if let Stmt::Assign { ref dst, ref val, .. } = stmt {
@@ -37,6 +48,7 @@ impl InferenceEngine {
                 }
                 stmt
             } else if matches!(mn.as_str(), "add"|"sub"|"imul"|"xor"|"and"|"or") {
+                if let Some(r) = ro(dst) { canary_regs.remove(r); }
                 let stmt = if is_md { self.make_arith_mem(addr, &mut regs, &mut stack, mn, dst, src) } else { self.make_arith(addr, &mut regs, &stack, mn, dst, src) };
                 if let Stmt::Assign { ref dst, ref val, .. } = stmt {
                     if let Some(r) = ro(dst) {
@@ -46,6 +58,7 @@ impl InferenceEngine {
                 }
                 stmt
             } else if mn == "lea" {
+                if let Some(r) = ro(dst) { canary_regs.remove(r); }
                 if let Some(d) = ro(dst) { if src.contains("rip") {
                     if let Ok(re) = regex_lite::Regex::new(r"rip\s*([-+])\s*(0x[0-9a-fA-F]+)") { if let Some(caps) = re.captures(src) {
                         if let Ok(off) = i64::from_str_radix(caps[2].strip_prefix("0x").unwrap_or(&caps[2]), 16) {
@@ -58,7 +71,7 @@ impl InferenceEngine {
             } else if mn.starts_with("cmov") { Stmt::Nop } else { Stmt::Comment(addr, format!("{} {}", mn, op)) };
             stmts.push(stmt);
         }
-        State { stmts, regs, stack, changed: false, iteration: 0, addr_map: HashMap::new(), ssa_ids }
+        State { stmts, regs, stack, changed: false, iteration: 0, addr_map: HashMap::new(), ssa_ids, canary_regs }
     }
     pub(crate) fn make_call(&self, addr: u64, regs: &HashMap<String, ValueDomain>, dst: &str) -> Stmt {
         let name = resolve_call_name(dst, 0, 0, &self.got_map, &self.func_map, &self.plt_map);

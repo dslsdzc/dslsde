@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ValueDomain { Unknown, Signed(i64), Unsigned(u64), Pointer(u64), Boolean, String(String) }
@@ -17,6 +17,7 @@ pub struct State {
     pub stack: HashMap<i64, ValueDomain>, pub changed: bool, pub iteration: u32,
     pub addr_map: HashMap<u64, String>,
     pub ssa_ids: HashMap<u64, u32>,
+    pub canary_regs: HashSet<String>,
 }
 
 impl Stmt {

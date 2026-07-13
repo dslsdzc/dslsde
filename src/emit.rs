@@ -23,9 +23,13 @@ impl InferenceEngine {
         struct Pat { from_arg: bool, inc1: bool, compared_low: bool, compared_high: bool, returned: bool, vtype: VarType }
         // 寄存器→最新 SSA id（用于栈变量反查类型）
         let mut reg_latest: HashMap<String, u32> = HashMap::new();
-        for (&a, &sid) in &state.ssa_ids {
-            if let Some(v) = ssa.get(sid) {
-                reg_latest.insert(v.reg.clone(), sid);
+        let mut sorted_addrs: Vec<u64> = state.ssa_ids.keys().copied().collect();
+        sorted_addrs.sort();
+        for a in sorted_addrs {
+            if let Some(&sid) = state.ssa_ids.get(&a) {
+                if let Some(v) = ssa.get(sid) {
+                    reg_latest.insert(v.reg.clone(), sid);
+                }
             }
         }
         let mut pats: HashMap<i64, Pat> = HashMap::new();
@@ -191,6 +195,11 @@ impl InferenceEngine {
                     if dst.starts_with("[rbp") {
                         let Some(off) = so(dst) else { continue; };
                         let Some(name) = vn.get(&off) else { continue; };
+                        // 栈金丝雀（val = Pointer(0x28)）→ 注释而非声明
+                        if matches!(val, ValueDomain::Pointer(0x28)) {
+                            m.insert(*addr, format!("// {} = __readfsqword(0x28)  /* stack canary */", name));
+                            continue;
+                        }
                         let line = if info.contains(' ') {
                             let sp = info.find(' ').unwrap();
                             format!("{} {}= {}", name, &info[..sp].trim(), resolve_reg(&info[sp..].trim(), &rv))
@@ -268,6 +277,7 @@ impl InferenceEngine {
 
         // 收集变量首次赋值地址 → 提到函数顶部做声明
         let mut first_assign: HashMap<String, u64> = HashMap::new();
+        let mut canary_vars: HashSet<String> = HashSet::new();
         for (&a, line) in &state.addr_map {
             if let Some(eq) = line.find(" = ") {
                 let name = line[..eq].trim();
@@ -275,15 +285,19 @@ impl InferenceEngine {
                     && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
                     && !first_assign.contains_key(name)
                 {
-                    first_assign.insert(name.to_string(), a);
+                    // 检查是否是栈金丝雀变量（注释行不计入声明）
+                    if line.starts_with("//") {
+                        canary_vars.insert(name.to_string());
+                    } else {
+                        first_assign.insert(name.to_string(), a);
+                    }
                 }
             }
         }
-        // 输出变量声明块
+        // 输出变量声明块（跳过金丝雀变量）
         let mut var_names: Vec<&String> = first_assign.keys().collect();
         var_names.sort();
         if !var_names.is_empty() {
-            // 按类型分组: void* v1; int arg_152, v2, v3;
             let mut by_type: HashMap<&str, Vec<&String>> = HashMap::new();
             for name in &var_names {
                 let t = var_types.get(name.as_str()).map(|s| s.as_str()).unwrap_or("int");
