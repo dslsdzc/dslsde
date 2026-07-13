@@ -4,6 +4,7 @@ use crate::infer::InferenceEngine;
 use crate::cfg::Cfg;
 use crate::types::{VarType, infer_var_type};
 use crate::ssa::{SsaContext, SsaOp};
+use crate::switch::JumpTable;
 
 impl InferenceEngine {
     pub(crate) fn build_addr_map(&self, state: &State, ssa: &SsaContext) -> (HashMap<u64, String>, HashMap<String, String>) {
@@ -309,7 +310,21 @@ impl InferenceEngine {
                     };
                     m.insert(*addr, cond_str);
                 }
-                Stmt::Call { addr, name, args, .. } => { let a: Vec<String> = args.iter().map(fmt_val).collect(); if !a.is_empty() { m.insert(*addr, format!("{}({});", name, a.join(", "))); } }
+                Stmt::Call { addr, name, args, .. } => {
+                    // 签名驱动参数名
+                    let sig = crate::sigs::lookup(name);
+                    let a: Vec<String> = if let Some(s) = sig {
+                        args.iter().enumerate().map(|(i, v)| {
+                            let val = fmt_val(v);
+                            if i < s.args.len() && !s.args[i].is_empty() {
+                                format!("{}: {}", s.args[i], val)
+                            } else { val }
+                        }).collect()
+                    } else {
+                        args.iter().map(fmt_val).collect()
+                    };
+                    if !a.is_empty() { m.insert(*addr, format!("{}({});", name, a.join(", "))); }
+                }
                 Stmt::Return { addr, val, .. } => { m.insert(*addr, format!("return {};", val.as_ref().map_or("?".into(), fmt_val))); }
                 _ => {}
             }
@@ -334,7 +349,8 @@ impl InferenceEngine {
     }
 
     pub(crate) fn emit_structured(&self, state: &State, cfg: &Cfg, trace: &HashSet<u64>,
-                                   var_types: &HashMap<String, String>) -> String {
+                                   var_types: &HashMap<String, String>,
+                                   jump_tables: &[JumpTable]) -> String {
         let mut out = Vec::new(); let mut visited = HashSet::new(); let mut consumed = HashSet::new();
         let first = *trace.iter().min().unwrap_or(&0); let entry = cfg.blocks.keys().filter(|&&k| k <= first).last().copied().unwrap_or(cfg.entry);
         let loops = cfg.find_natural_loops();
@@ -376,19 +392,41 @@ impl InferenceEngine {
             }
         }
 
-        self.emit_block(entry, cfg, &state.addr_map, trace, &mut visited, &mut consumed, 0, &mut out, &loop_headers, &first_assign); out.join("\n")
+        self.emit_block(entry, cfg, &state.addr_map, trace, &mut visited, &mut consumed, 0, &mut out, &loop_headers, &first_assign, jump_tables); out.join("\n")
     }
 
     pub(crate) fn emit_block(&self, addr: u64, cfg: &Cfg, lines: &HashMap<u64, String>, trace: &HashSet<u64>,
                   visited: &mut HashSet<u64>, consumed: &mut HashSet<u64>, depth: usize, out: &mut Vec<String>,
-                  loop_headers: &HashSet<u64>, first_assign: &HashMap<String, u64>) {
+                  loop_headers: &HashSet<u64>, first_assign: &HashMap<String, u64>,
+                  jump_tables: &[JumpTable]) {
+        // 如果是间接跳转且匹配跳转表 → switch 输出
+        if let Some(block) = cfg.blocks.get(&addr) {
+            let jt = jump_tables.iter().find(|jt| {
+                // 跳转表的起始地址需在块范围内，或块最后一条指令是间接跳转
+                block.addr <= jt.addr && jt.addr < block.addr + block.size
+            });
+            if let Some(table) = jt {
+                let ind = "  ".repeat(depth);
+                let mut case_lines: Vec<String> = Vec::new();
+                for (idx, &target) in table.entries.iter().enumerate() {
+                    let target_name = lines.get(&target).cloned().unwrap_or_default();
+                    case_lines.push(format!("{}case {}: goto {};", ind, idx, target_name));
+                }
+                // 如果 switch 块的上一行有 if(++ 或类似的分支，跳过它
+                out.push(format!("{}switch ({}) {{", ind, table.index_reg));
+                for l in &case_lines { out.push(l.to_string()); }
+                out.push(format!("{}}}", ind));
+                visited.insert(addr);
+                return;
+            }
+        }
         if addr == 0 || !cfg.blocks.contains_key(&addr) || visited.contains(&addr) { return; }
         visited.insert(addr);
         let block = &cfg.blocks[&addr];
         let has_lines = (block.addr..block.addr + block.size).any(|a| lines.contains_key(&a));
         let block_traced = (block.addr..block.addr + block.size).any(|a| trace.contains(&a));
         if !has_lines && !block_traced {
-            if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out, loop_headers, first_assign); }
+            if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out, loop_headers, first_assign, jump_tables); }
             return;
         }
         let ind = "  ".repeat(depth);
@@ -407,7 +445,7 @@ impl InferenceEngine {
             }
         }
         if block.succs.is_empty() { return; }
-        if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out, loop_headers, first_assign); return; }
+        if block.succs.len() == 1 { self.emit_block(block.succs[0], cfg, lines, trace, visited, consumed, depth, out, loop_headers, first_assign, jump_tables); return; }
         let t = block.succs[0]; let e = block.succs[1];
 
         // 回边 + 支配节点 → 循环识别
@@ -458,8 +496,8 @@ impl InferenceEngine {
         } else {
             let in_t = |x: u64| cfg.blocks.get(&x).map_or(false, |bl| (bl.addr..bl.addr + bl.size).any(|a| trace.contains(&a)));
             let taken = if in_t(e) { e } else { t }; let not_taken = if taken == t { e } else { t };
-            out.push(format!("{}{{", ind)); self.emit_block(taken, cfg, lines, trace, visited, consumed, depth + 1, out, loop_headers, first_assign);
-            if not_taken != 0 && cfg.blocks.contains_key(&not_taken) && in_t(not_taken) { out.push(format!("{}}} else {{", ind)); self.emit_block(not_taken, cfg, lines, trace, visited, consumed, depth + 1, out, loop_headers, first_assign); }
+            out.push(format!("{}{{", ind)); self.emit_block(taken, cfg, lines, trace, visited, consumed, depth + 1, out, loop_headers, first_assign, jump_tables);
+            if not_taken != 0 && cfg.blocks.contains_key(&not_taken) && in_t(not_taken) { out.push(format!("{}}} else {{", ind)); self.emit_block(not_taken, cfg, lines, trace, visited, consumed, depth + 1, out, loop_headers, first_assign, jump_tables); }
             out.push(format!("{}}}", ind));
         }
     }

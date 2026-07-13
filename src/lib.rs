@@ -13,6 +13,7 @@ pub mod switch;
 pub mod array;
 pub mod structr;
 pub mod typeflow;
+pub mod sigs;
 pub mod infer;
 
 use pyo3::prelude::*;
