@@ -185,6 +185,7 @@ impl InferenceEngine {
 
         // Pass 2: generate output
         let mut m: HashMap<u64, String> = HashMap::new();
+        let mut canary_shown: HashSet<String> = HashSet::new();
         let mut rv: HashMap<String, String> = HashMap::new();
         // 寄存器→全局符号 映射（rg），从 SSA 构建
         // 按地址排序以保持时序，只保留首次赋值
@@ -243,9 +244,11 @@ impl InferenceEngine {
                     if dst.starts_with("[rbp") {
                         let Some(off) = so(dst) else { continue; };
                         let Some(name) = vn.get(&off) else { continue; };
-                        // 栈金丝雀（val = Pointer(0x28)）→ 注释而非声明
+                        // 栈金丝雀（val = Pointer(0x28)）→ 注释而非声明（全局去重）
                         if matches!(val, ValueDomain::Pointer(0x28)) {
-                            m.insert(*addr, format!("// {} = __readfsqword(0x28)  /* stack canary */", name));
+                            if canary_shown.insert("__cany__".to_string()) {
+                                m.insert(*addr, format!("// {} = __readfsqword(0x28)  /* stack canary */", name));
+                            }
                             continue;
                         }
                         let line = if info.contains(' ') {
