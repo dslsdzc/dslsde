@@ -157,7 +157,7 @@ def _run_unicorn(container_path: str, func_addr: int,
     """Unicorn 执行容器"""
     try:
         from unicorn import Uc, UC_ARCH_X86, UC_MODE_64, UC_HOOK_CODE
-        from unicorn.x86_const import UC_X86_REG_RSP, UC_X86_REG_RBP
+        from unicorn.x86_const import UC_X86_REG_RSP, UC_X86_REG_RBP, UC_X86_REG_RDI
     except ImportError:
         return []
 
@@ -271,6 +271,135 @@ def _run_qemu(container_path: str, func_addr: int,
 
 # ── 主入口 ──
 
+def _run_unicorn_container(container_path: str, load_addr: int,
+                            binary_path: str = None,
+                            func_addr: int = 0,
+                            timeout: float = 5.0) -> List[Tuple]:
+    """Unicorn 执行容器 + 数据段映射"""
+    try:
+        from unicorn import Uc, UC_ARCH_X86, UC_MODE_64, UC_HOOK_CODE
+        from unicorn.x86_const import UC_X86_REG_RSP, UC_X86_REG_RBP, UC_X86_REG_RDI
+    except ImportError:
+        return []
+
+    import dslsde_core
+
+    with open(container_path, 'rb') as f:
+        elf_data = f.read()
+
+    STACK_SIZE = 0x20000
+    code_size = ((len(elf_data) + 0xfff) & ~0xfff)
+    STACK_ADDR = load_addr + code_size + 0x10000
+
+    uc = Uc(UC_ARCH_X86, UC_MODE_64)
+
+    # 代码段
+    uc.mem_map(load_addr, code_size, 7)  # RWX
+    uc.mem_write(load_addr, elf_data[120:])
+
+    # 栈
+    uc.mem_map(STACK_ADDR - 0x10000, STACK_SIZE, 3)  # RW
+    sp = STACK_ADDR - 0x200
+    uc.reg_write(UC_X86_REG_RSP, sp)
+    uc.reg_write(UC_X86_REG_RBP, sp - 0x100)
+
+    # 堆: 映射一大块全零内存，函数参数指向这里 (避免 NULL ptr crash)
+    HEAP_ADDR = 0x60000000
+    HEAP_SIZE = 0x1000000
+    uc.mem_map(HEAP_ADDR, HEAP_SIZE, 3)  # RW
+    # 设置参数: rdi = heap (非空指针)
+    uc.reg_write(UC_X86_REG_RDI, HEAP_ADDR)
+
+    # 映射原二进制数据段 (给函数提供全局变量/状态变量)
+    if binary_path and func_addr:
+        with open(binary_path, 'rb') as f:
+            binary = f.read()
+        info = _read_elf_info(binary)
+        if info:
+            for seg in info['segments']:
+                if seg['type'] == 1:  # PT_LOAD
+                    # 映射所有数据段到原始地址
+                    size = ((seg['memsz'] + 0xfff) & ~0xfff)
+                    try:
+                        if seg['flags'] & 2:  # W → 数据段
+                            try:
+                                uc.mem_map(seg['vaddr'], size, 3)
+                            except Exception:
+                                try:
+                                    uc.mem_map(seg['vaddr'], size, 7)
+                                except:
+                                    pass
+                        elif seg['flags'] & 1:  # X → 代码段跳过（已经映射了）
+                            continue
+                        else:  # 只读数据
+                            try:
+                                uc.mem_map(seg['vaddr'], size, 4)
+                            except:
+                                pass
+                        # 写入段数据
+                        if seg['filesz'] > 0:
+                            data = binary[seg['offset']:seg['offset']+seg['filesz']]
+                            uc.mem_write(seg['vaddr'], data)
+                    except Exception:
+                        pass  # 地址可能冲突，跳过
+
+    # 记录 trace
+    recorder = dslsde_core.TraceRecorder(50000)
+    insn_count = [0]
+
+    def hook_code(uc, address, size, user_data):
+        recorder.record(address, size)
+        insn_count[0] += 1
+        if insn_count[0] > 5000:
+            uc.emu_stop()
+
+    uc.hook_add(UC_HOOK_CODE, hook_code)
+
+    try:
+        uc.emu_start(load_addr, until=0, timeout=int(timeout * 1e6))
+    except Exception:
+        pass
+
+    raw = recorder.drain()
+    if not raw:
+        return []
+
+    # 用 Capstone 反汇编
+    md = Cs(CS_ARCH_X86, CS_MODE_64)
+    with open(container_path, 'rb') as f:
+        elf_data = f.read()
+
+    result = []
+    seen = set()
+    for addr, size in raw:
+        if addr in seen:
+            continue
+        seen.add(addr)
+        offset = addr - load_addr
+        if 0 <= offset < len(elf_data) - 120:
+            chunk = elf_data[120 + offset:120 + offset + 15]
+            for insn in md.disasm(chunk, addr, count=1):
+                result.append((insn.address, insn.size, insn.mnemonic, insn.op_str))
+                break
+        else:
+            # 可能跳转到了原始二进制地址
+            if binary_path:
+                with open(binary_path, 'rb') as f:
+                    binary = f.read()
+                info = _read_elf_info(binary)
+                if info:
+                    for seg in info['segments']:
+                        if seg['vaddr'] <= addr < seg['vaddr'] + seg['filesz']:
+                            off = addr - seg['vaddr'] + seg['offset']
+                            chunk = binary[off:off+15]
+                            for insn in md.disasm(chunk, addr, count=1):
+                                result.append((addr, insn.size, insn.mnemonic, insn.op_str))
+                                break
+                            break
+
+    return result
+
+
 def run_in_container(binary_path: str, func_addr: int,
                      timeout: float = 5.0,
                      use_qemu: bool = False) -> List[Tuple]:
@@ -287,10 +416,10 @@ def run_in_container(binary_path: str, func_addr: int,
         f.write(elf)
     os.chmod(elf_path, 0o755)
 
-    if use_qemu:
-        return _run_qemu(elf_path, 0x100000, timeout)
-    else:
-        return _run_unicorn(elf_path, 0x100000, timeout)
+    return _run_unicorn_container(
+        elf_path, 0x100000,
+        binary_path=binary_path, func_addr=func_addr,
+        timeout=timeout)
 
 
 def container_decompile(binary_path: str, func_addr: int,

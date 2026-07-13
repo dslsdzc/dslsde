@@ -64,7 +64,16 @@ impl InferenceEngine {
                           else { switch::recover_jump_tables(&self.binary_data, self.text_base, &native) };
         // CFF 反混淆: 检测 dispatcher → 恢复块顺序
         let deobf_info = deobfuscate::deobfuscate(&cfg, &trace_addrs, &state.stmts);
-        self.emit_structured(&state, &cfg, &trace_addrs, &var_types, &jump_tables)
+        // 收敛指标: trace覆盖路径 / 静态总路径
+        let result = self.emit_structured(&state, &cfg, &trace_addrs, &var_types, &jump_tables);
+        if deobf_info.total_paths > 0 {
+            format!("// convergence: {:.0}% ({}/{})\n{}",
+                     deobf_info.convergence * 100.0,
+                     deobf_info.traced_paths, deobf_info.total_paths,
+                     result)
+        } else {
+            result
+        }
     }
 }
 
