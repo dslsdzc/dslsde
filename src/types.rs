@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 /// 变量类型
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum VarType { Int, UInt, Ptr, CharPtr, Bool, Unknown }
 
 impl Default for VarType {

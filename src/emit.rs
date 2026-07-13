@@ -5,9 +5,12 @@ use crate::cfg::Cfg;
 use crate::types::{VarType, infer_var_type};
 use crate::ssa::{SsaContext, SsaOp};
 use crate::switch::JumpTable;
+use crate::typeprop;
 
 impl InferenceEngine {
     pub(crate) fn build_addr_map(&self, state: &State, ssa: &SsaContext) -> (HashMap<u64, String>, HashMap<String, String>) {
+        // SSA 驱动类型传播 (一次计算, 多处使用)
+        let ssa_types = typeprop::infer_types(ssa);
     fn type_str(vt: &VarType) -> &'static str {
         match vt {
             VarType::Ptr => "void*",
@@ -65,6 +68,16 @@ impl InferenceEngine {
                             }
                             if p.vtype == VarType::Unknown {
                                 if let Some(t) = infer_var_type(info) { p.vtype = t; }
+                            }
+                        }
+                    }
+                    // SSA 驱动类型推断: 从 def-use 链传播
+                    if p.vtype == VarType::Unknown {
+                        if let Some(&sid) = state.ssa_ids.get(addr) {
+                            if let Some(ssa_t) = ssa_types.get(&sid) {
+                                if *ssa_t != VarType::Unknown {
+                                    p.vtype = ssa_t.clone();
+                                }
                             }
                         }
                     }

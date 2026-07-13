@@ -13,6 +13,7 @@ pub mod switch;
 pub mod array;
 pub mod structr;
 pub mod typeflow;
+pub mod typeprop;
 pub mod sigs;
 pub mod infer;
 
