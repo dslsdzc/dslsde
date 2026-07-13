@@ -166,16 +166,20 @@ impl InferenceEngine {
                 else if p.returned && !p.inc1 { "sum".into() }
                 else if p.from_arg { format!("arg_{}", -off) }
                 else { format!("v{}", pats.keys().filter(|&&k| k < off).count() + 1) };
-            // SSA 类型覆盖: 通过源寄存器反查 SSA 类型
-            let ssa_t = state.stmts.iter().find_map(|s| {
-                if let Stmt::Assign { dst, info, .. } = s {
-                    if so(dst) == Some(off) {
-                        let canon = crate::ir::ro(info.trim()).unwrap_or(info.trim());
-                        reg_latest.get(canon).and_then(|sid| ssa_types.get(sid))
+            // SSA 类型：仅在 p.vtype 为 Unknown 时覆盖（避免寄存器最终类型污染）
+            let final_t = if p.vtype != VarType::Unknown {
+                &p.vtype
+            } else {
+                let ssa_t = state.stmts.iter().find_map(|s| {
+                    if let Stmt::Assign { dst, info, .. } = s {
+                        if so(dst) == Some(off) {
+                            let canon = crate::ir::ro(info.trim()).unwrap_or(info.trim());
+                            reg_latest.get(canon).and_then(|sid| ssa_types.get(sid))
+                        } else { None }
                     } else { None }
-                } else { None }
-            });
-            let final_t = ssa_t.unwrap_or(&p.vtype);
+                });
+                ssa_t.unwrap_or(&p.vtype)
+            };
             var_types.insert(name.clone(), type_str(final_t).to_string());
             vn.insert(off, name);
         }
