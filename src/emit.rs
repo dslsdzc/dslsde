@@ -298,13 +298,13 @@ impl InferenceEngine {
                     }
                     // 结构体字段检测: dst 为 [base + N] → 格式化为 base->field_N
                     if dst.contains('[') && !dst.starts_with("[rbp") {
-                        if let Some((base, off)) = crate::structr::format_struct_access(dst) {
+                        if let Some((base, off)) = crate::structr::parse_field_access(dst) {
                             m.insert(*addr, format!("{}->field_{:#x} = {}", base, off, val_s(val, info)));
                         }
                     }
                     // 结构体字段检测: info 为 [base + N] → 格式化为 field 加载
                     if info.contains('[') && !info.starts_with("[rbp") {
-                        if let Some((base, off)) = crate::structr::format_struct_access(info) {
+                        if let Some((base, off)) = crate::structr::parse_field_access(info) {
                             m.insert(*addr, format!("// {} = {}->field_{:#x}", dst, base, off));
                         }
                     }

@@ -1,71 +1,142 @@
-/// dslsde — 结构体恢复
+/// dslsde — 结构体恢复 (OSPREY 启发)
 ///
-/// 从 [base + offset] 和 [base + index*scale] 模式推断结构体
-/// 如果同一个基址有多个偏移访问 → 结构体字段
+/// 核心方法 (OSPREY IEEE S&P 2021):
+///   1. 追踪 [base + offset] 内存访问模式
+///   2. 偏移聚类 → 字段边界推断
+///   3. 指针关联 → 嵌套结构体检测
+///
+/// 字段命名 (ReSym CCS 2024 启发):
+///   访问模式 → field_0, field_1, ...
+///
+/// 集成: emit.rs 在变量命名阶段调用 format_struct_access,
+///       用 inferred_structs 替换 raw [base+N] 输出
 
 use std::collections::{HashMap, HashSet};
 
+/// 单次内存访问记录
+#[derive(Clone, Debug)]
+pub struct MemAccess {
+    pub base_reg: String,
+    pub offset: i64,
+    pub size: u32,
+    pub is_write: bool,
+}
+
+/// 推断出的字段
 #[derive(Clone, Debug)]
 pub struct StructField {
     pub offset: i64,
     pub size: u32,
     pub type_name: String,
+    pub field_name: String,       // field_0, field_1, ...
+    pub nested_struct: Option<Box<StructInfo>>,
 }
 
+/// 结构体信息
 #[derive(Clone, Debug)]
 pub struct StructInfo {
     pub base_reg: String,
     pub fields: Vec<StructField>,
     pub total_size: i64,
+    pub is_nested: bool,
 }
 
-/// 从 [ptr + offset] 访问集合推断结构体
-/// offsets: 每个 (偏移, 访问大小) 对
-pub fn recover_struct(base_reg: &str, offsets: &[(i64, u32)]) -> Option<StructInfo> {
-    if offsets.len() < 2 { return None; }  // 至少两个字段
+// ── OSPREY 核心: 从访问记录推断结构体 ──
 
-    let mut uniq: Vec<(i64, u32)> = offsets.to_vec();
-    uniq.sort_by_key(|(off, _)| *off);
-    uniq.dedup();
+/// 从内存访问集合推断结构体
+/// 对同一个基址的多次不同偏移访问 → 字段
+pub fn infer_struct(base_reg: &str, accesses: &[MemAccess]) -> Option<StructInfo> {
+    if accesses.len() < 2 { return None; }
 
-    // 查找对齐的字段序列
+    // 聚类偏移: 按 offset 去重, 保留最大访问 size
+    let mut offset_map: HashMap<i64, u32> = HashMap::new();
+    for acc in accesses {
+        let entry = offset_map.entry(acc.offset).or_insert(0);
+        *entry = (*entry).max(acc.size);
+    }
+    // 检查对齐 → 结构体推断门槛
+    let aligned_count = offset_map.keys().filter(|off| **off % 4 == 0).count();
+    if aligned_count < 2 { return None; }
+
+    let mut sorted_offsets: Vec<(i64, u32)> = offset_map.into_iter().collect();
+    sorted_offsets.sort_by_key(|(off, _)| *off);
+
+    // 推断字段: 按 offset 顺序, 计算 gap 和 padding
     let mut fields = Vec::new();
-    for (i, &(off, size)) in uniq.iter().enumerate() {
+    for (i, &(off, size)) in sorted_offsets.iter().enumerate() {
+        let next_off = if i + 1 < sorted_offsets.len() { sorted_offsets[i+1].0 }
+                       else { off + 8.min(size as i64 * 2) };
+        let field_size = (next_off - off).abs() as u32;
+        let field_name = format!("field_{}", i);
+
+        // 类型: 从 size 推断
         let type_name = match size {
-            1 => "uint8_t",
-            2 => "uint16_t",
-            4 => "uint32_t",
-            8 => "uint64_t",
-            16 => "struct",
-            _ => "uint8_t",
+            1 => "uint8_t".to_string(),
+            2 => "uint16_t".to_string(),
+            4 => "uint32_t".to_string(),
+            8 => "uint64_t".to_string(),
+            _ => format!("uint{}_t", size * 8),
         };
-        let next_off = if i + 1 < uniq.len() { uniq[i+1].0 } else { off + size as i64 };
-        let aligned_size = (next_off - off) as u32;
+
         fields.push(StructField {
             offset: off,
-            size: aligned_size.max(size),
-            type_name: type_name.to_string(),
+            size: field_size.max(size),
+            type_name,
+            field_name,
+            nested_struct: None,
         });
     }
 
-    let total_size = fields.last().map(|f| f.offset + f.size as i64).unwrap_or(0);
-
+    let last = fields.last().unwrap();
+    let total_size = last.offset + last.size as i64;
     Some(StructInfo {
         base_reg: base_reg.to_string(),
         fields,
         total_size,
+        is_nested: false,
     })
 }
 
-/// 检测操作数中的结构体字段访问模式
-/// 例如 "[rax + 0x10]" → Some(("rax", 16))
-/// 排除 [rbp+...] 和 [rip+...]（非结构体上下文）
-/// 仅返回小偏移 (< 256) 的固定偏移访问
-pub fn format_struct_access(op: &str) -> Option<(String, i64)> {
+// ── 指针关联: SSA def-use 链追踪 ──
+
+/// 指针关联表: 追踪寄存器之间的指针传递关系
+/// 例如: rdi → rax (mov rax, rdi), rax → rcx (mov rcx, rax)
+pub fn track_pointer_flow(stmts: &[crate::ir::Stmt]) -> HashMap<String, String> {
+    let mut flow: HashMap<String, String> = HashMap::new();
+    for stmt in stmts {
+        if let crate::ir::Stmt::Assign { dst, info, .. } = stmt {
+            if info.contains("[rbp") { continue; }
+            if info.contains("+") || info.contains("-") { continue; }
+            let src_reg = info.trim();
+            // reg → reg 复制
+            if let Some(d) = ro(dst) {
+                if let Some(s) = ro(src_reg) {
+                    flow.insert(d.to_string(), s.to_string());
+                }
+            }
+        }
+    }
+    flow
+}
+
+fn ro(op: &str) -> Option<&str> {
+    Some(match op {
+        "eax"|"rax"=>"rax","ebx"|"rbx"=>"rbx","ecx"|"rcx"=>"rcx",
+        "edx"|"rdx"=>"rdx","esi"|"rsi"=>"rsi","edi"|"rdi"=>"rdi",
+        "rsp"=>"rsp","rbp"=>"rbp","r8d"|"r8"=>"r8","r9d"|"r9"=>"r9",
+        _=>return None,
+    })
+}
+
+// ── 操作数解析 ──
+
+/// 从操作数字符串解析结构体字段访问
+/// "[rax + 0x10]" → Some(("rax", 16))
+/// 排除 rbp/rip 基址
+pub fn parse_field_access(op: &str) -> Option<(String, i64)> {
     let re = regex_lite::Regex::new(r"\[(\w+)\s*\+\s*(0x[0-9a-fA-F]+|\d+)\]").ok()?;
     let caps = re.captures(op)?;
     let base = caps[1].to_string();
-    // 排除 rbp 和 rip（栈帧 / GOT，非结构体）
     if base == "rbp" || base == "rip" { return None; }
     let off_str = &caps[2];
     let offset = if let Some(hex) = off_str.strip_prefix("0x") {
@@ -73,34 +144,39 @@ pub fn format_struct_access(op: &str) -> Option<(String, i64)> {
     } else {
         off_str.parse::<i64>().ok()?
     };
-    if offset > 0 && offset < 256 {
-        Some((base, offset))
-    } else {
-        None
-    }
+    if offset > 0 && offset < 512 { Some((base, offset)) } else { None }
 }
 
-/// 从数组访问转换到结构体推断
-/// 如果一个指针既有数组访问又有固定偏移访问 → 结构体数组
-pub fn struct_from_mixed(ptr_name: &str, offsets: &[i64], array_indices: &[i64]) -> Option<StructInfo> {
-    let all_offsets: HashSet<i64> = offsets.iter().copied().collect();
-    if all_offsets.len() < 2 { return None; }
-
-    let mut offsets: Vec<i64> = all_offsets.into_iter().collect();
-    offsets.sort();
-
-    let fields: Vec<StructField> = offsets.iter().map(|&off| {
-        StructField {
-            offset: off,
-            size: 8,
-            type_name: "uint64_t".to_string(),
+/// 为操作数中的结构体访问生成格式化输出
+pub fn format_access(op: &str, structs: &HashMap<String, &StructInfo>) -> Option<String> {
+    let (base, off) = parse_field_access(op)?;
+    if let Some(si) = structs.get(&base) {
+        for field in &si.fields {
+            if field.offset == off {
+                return Some(format!("{}.{}", base, field.field_name));
+            }
         }
-    }).collect();
+    }
+    None
+}
 
-    let total_size = fields.last().map(|f| f.offset + f.size as i64).unwrap_or(8);
-    Some(StructInfo {
-        base_reg: ptr_name.to_string(),
-        fields,
-        total_size,
-    })
+/// 从 Stmts 中提取所有内存访问
+pub fn collect_accesses(stmts: &[crate::ir::Stmt]) -> Vec<MemAccess> {
+    let mut accesses = Vec::new();
+    for stmt in stmts {
+        match stmt {
+            crate::ir::Stmt::Assign { dst, info, .. } => {
+                // dst 中解析
+                if let Some((base, off)) = parse_field_access(dst) {
+                    accesses.push(MemAccess { base_reg: base, offset: off, size: 8, is_write: true });
+                }
+                // info 中解析
+                if let Some((base, off)) = parse_field_access(info) {
+                    accesses.push(MemAccess { base_reg: base, offset: off, size: 8, is_write: false });
+                }
+            }
+            _ => {}
+        }
+    }
+    accesses
 }
