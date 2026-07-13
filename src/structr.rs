@@ -67,9 +67,10 @@ pub fn infer_struct(base_reg: &str, accesses: &[MemAccess]) -> Option<StructInfo
         let next_off = if i + 1 < sorted_offsets.len() { sorted_offsets[i+1].0 }
                        else { off + 8.min(size as i64 * 2) };
         let field_size = (next_off - off).abs() as u32;
-        let field_name = format!("field_{}", i);
 
-        // 类型: 从 size 推断
+        // ReSym 启发: 从偏移和大小推断语义字段名
+        let field_name = infer_field_name(off, size, i, &sorted_offsets);
+
         let type_name = match size {
             1 => "uint8_t".to_string(),
             2 => "uint16_t".to_string(),
@@ -158,6 +159,42 @@ pub fn format_access(op: &str, structs: &HashMap<String, &StructInfo>) -> Option
         }
     }
     None
+}
+
+/// ReSym 启发: 从偏移和访问模式推断字段名
+/// offset 0 → 通常是指针或长度字段
+/// offset 8 → 第二个字段, 32/64位值
+/// 小偏移密集排列 → 标志位或枚举
+fn infer_field_name(off: i64, size: u32, index: usize, sorted: &[(i64, u32)]) -> String {
+    // offset 0 的特殊语义
+    if off == 0 {
+        let next = sorted.get(1);
+        if let Some(&(n_off, _)) = next {
+            let gap = n_off - off;
+            if gap == 8 && size == 8 { return "ptr".to_string(); }   // 典型: 第一个字段是指针
+            if gap == 4 && size == 4 { return "length".to_string(); } // 4字节 → 长度
+            if gap == 2 && size == 2 { return "flags".to_string(); }  // 2字节 → 标志位
+        }
+        return if size >= 8 { "ptr".to_string() } else { "field_0".to_string() };
+    }
+
+    // 基于偏移模式的常见命名
+    let pattern = (off, size, index);
+    match pattern {
+        (8, 8, 1) if off == 8 => return "size".to_string(),
+        (16, 8, 2) if off == 16 => return "data".to_string(),
+        (12, 4, _) | (24, 4, _) => return "flags".to_string(),
+        _ => {}
+    }
+
+    // 大小推断
+    match size {
+        1 => format!("flag_{}", index),
+        2 => format!("field_{}", index),
+        4 if off % 8 == 0 => format!("field_{}", index),
+        8 => format!("field_{}", index),
+        _ => format!("field_{}", index),
+    }
 }
 
 /// 从 Stmts 中提取所有内存访问

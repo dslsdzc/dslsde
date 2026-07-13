@@ -1,0 +1,33 @@
+# dslsde — 全局配置文件
+# 放置在 ~/.dslsde/config.yaml
+
+engine:
+  # 推理引擎收敛轮数
+  passes: 5
+  ssa: true
+  dce: true
+  type_propagation: true
+
+output:
+  show_register_comments: false
+  show_stack_canary: true
+  indent_size: 2
+  struct_field_naming: field_n  # field_n | offset | hex
+
+types:
+  struct_min_fields: 2
+  max_struct_size: 4096
+  array_threshold: 3
+
+# ── 签名覆盖 ──
+# 覆盖或补充自动推断的函数签名
+# signatures:
+#   my_func: ([["param1", "param2"], "int", false])
+
+# ── 预定义结构体 ──
+# structs:
+#   sockaddr_in:
+#     fields:
+#       - {offset: 0, type: "uint16_t", name: "sin_family"}
+#       - {offset: 2, type: "uint16_t", name: "sin_port"}
+#       - {offset: 4, type: "uint32_t", name: "sin_addr"}
