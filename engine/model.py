@@ -182,8 +182,7 @@ class Model:
                         if name: self._plt_map[addr] = name
         return self._plt_map
 
-    def run_function(self, func_addr: int, args: List[int] = None, timeout: float = 1.0,
-                     engine: str = "unicorn") -> str:
+    def run_function(self, func_addr: int, args: List[int] = None, timeout: float = 1.0) -> str:
         if self.binary is None: return "// no binary loaded"
         if args is None:
             func = None
@@ -203,15 +202,9 @@ class Model:
         for alt in [[0]*6, [1]*6, [9999]*6]:
             if alt != args and alt != [0]*6:  # 避免重复
                 pass
-        # 选择执行引擎（unicorn / qemu）
-        if engine == "qemu":
-            from engine.dynamic.qemu_runner import QemuRunner
-            runner = QemuRunner(self._path)
-            raw_trace = runner.run(func_addr, args=args, timeout=timeout)
-        else:
-            runner = Runner(self.binary)
-            raw_trace = runner.run(func_addr, args=args, timeout=timeout)
-            runner.close()
+        runner = Runner(self.binary)
+        raw_trace = runner.run(func_addr, args=args, timeout=timeout)
+        runner.close()
         if not raw_trace: return "// (no trace)"
 
         # 合并所有 trace（去重）
