@@ -94,6 +94,10 @@ dslsde 的设计和实现参考了以下学术工作：
 - **Johnson et al. 1994** — *The Program Structure Tree: Computing Control Regions in Linear Time*  
   PLDI 1994. 结构化控制流重建的基础算法。
 
+- **Basque et al. 2024** — *Ahoy SAILR! There is No Need to DREAM of C: A Compiler-Aware Structuring Algorithm for Binary Decompilation*  
+  USENIX Security 2024. 编译器感知的结构化算法，识别编译器优化模式并反向还原。  
+  [USENIX](https://www.usenix.org/conference/usenixsecurity24/presentation/basque)
+
 ## 启动
 
 ```bash

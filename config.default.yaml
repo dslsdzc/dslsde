@@ -18,6 +18,11 @@ types:
   struct_min_fields: 2
   max_struct_size: 4096
   array_threshold: 3
+  # SAILR 启发: 编译器感知对齐
+  #   default: 8 (x86-64 SysV)
+  #   msvc:    8 (MSVC x64)
+  #   packed:  1 (__attribute__((packed)))
+  compiler_alignment: 8
 
 # ── 签名覆盖 ──
 # 覆盖或补充自动推断的函数签名
