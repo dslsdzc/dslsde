@@ -55,29 +55,15 @@ impl KSwitchContext {
     }
 }
 
-/// 检测 dispatcher 块: CFG 中出度最高的块
-pub fn detect_dispatcher(cfg: &Cfg, trace: &HashSet<u64>) -> Option<DispatcherInfo> {
-    let candidates: Vec<u64> = cfg.blocks.keys().copied()
-        .filter(|addr| trace.contains(addr) || trace.contains(&addr.saturating_sub(1)))
+pub fn detect_dispatcher(cfg: &Cfg, _trace: &HashSet<u64>) -> Option<DispatcherInfo> {
+    let mut by_pred: Vec<(u64, usize)> = cfg.blocks.iter()
+        .map(|(&addr, b)| (addr, b.preds.len()))
         .collect();
-
-    let mut scored: Vec<(u64, usize)> = candidates.iter()
-        .filter_map(|&addr| cfg.blocks.get(&addr))
-        .filter(|b| b.succs.len() >= 3)
-        .map(|b| (b.addr, b.succs.len()))
-        .collect();
-
-    scored.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
-    scored.first().map(|&(addr, _)| {
+    by_pred.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
+    by_pred.first().filter(|&&(_, c)| c >= 5).map(|&(addr, _)| {
         let block = &cfg.blocks[&addr];
-        // 非 dispatcher 的后继 (排除自环)
         let cases: Vec<u64> = block.succs.iter().filter(|&&s| s != addr).copied().collect();
-        DispatcherInfo {
-            addr,
-            state_var: "state".to_string(),
-            case_addrs: cases.clone(),
-            case_count: cases.len(),
-        }
+        DispatcherInfo { addr, state_var: "state".to_string(), case_addrs: cases, case_count: block.preds.len() }
     })
 }
 
@@ -187,3 +173,5 @@ pub fn deobfuscate(cfg: &Cfg, trace: &HashSet<u64>,
         }
     }
 }
+
+// Debug marker for build verification

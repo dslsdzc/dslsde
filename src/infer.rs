@@ -62,6 +62,17 @@ impl InferenceEngine {
         // Switch 恢复
         let jump_tables = if self.binary_data.is_empty() { Vec::new() }
                           else { switch::recover_jump_tables(&self.binary_data, self.text_base, &native) };
+        // 间接跳转 → CFG 边（CFF dispatcher 检测需要）
+        let mut cfg = cfg;
+        for jt in &jump_tables {
+            if let Some(block) = cfg.blocks.get_mut(&jt.addr) {
+                for &entry in &jt.entries {
+                    if !block.succs.contains(&entry) {
+                        block.succs.push(entry);
+                    }
+                }
+            }
+        }
         // CFF 反混淆: 检测 dispatcher → 恢复块顺序
         let deobf_info = deobfuscate::deobfuscate(&cfg, &trace_addrs, &state.stmts);
         let result = self.emit_structured(&state, &cfg, &trace_addrs, &var_types, &jump_tables, &deobf_info);

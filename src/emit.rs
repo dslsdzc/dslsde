@@ -436,23 +436,34 @@ impl InferenceEngine {
                     out.push(format!("{} {};", t, names.iter().map(|n| n.as_str()).collect::<Vec<&str>>().join(", ")));
                 }
             }
-            // 按 k-switch 块顺序输出
+            // 按 k-switch 块顺序输出 (从 trace 提取指令)
             let ind = "  ";
-            for &baddr in &deobf.block_order {
+            for (bi, &baddr) in deobf.block_order.iter().enumerate() {
                 if let Some(block) = cfg.blocks.get(&baddr) {
+                    // 收集块内所有指令
+                    let mut block_lines: Vec<String> = Vec::new();
                     for a in block.addr..block.addr + block.size {
+                        // 优先 addr_map 中的语义行
                         if let Some(line) = state.addr_map.get(&a) {
                             if !consumed.contains(&a) {
-                                // 跳过声明行
                                 let is_decl = line.find(" = ").map_or(false, |eq| {
                                     first_assign.get(line[..eq].trim()).copied() == Some(a)
                                 });
                                 if !is_decl {
-                                    out.push(format!("{}{}", ind, line));
+                                    block_lines.push(format!("{}{}", ind, line));
                                 }
                                 consumed.insert(a);
                             }
+                        } else if trace.contains(&a) {
+                            // trace 中有但 addr_map 无 → 原始指令
+                            consumed.insert(a);
                         }
+                    }
+                    if block_lines.is_empty() {
+                        block_lines.push(format!("{}// case_{} @ {:#x}", ind, bi, baddr));
+                    }
+                    for l in block_lines {
+                        out.push(l);
                     }
                 }
             }

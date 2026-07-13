@@ -190,6 +190,16 @@ class Model:
         runner.close()
         if not raw_trace: return "// (no trace)"
 
+        # CFF 回退: Unicorn trace 太短 → 容器执行
+        if len(raw_trace) < 50:
+            try:
+                from engine.dynamic.container import run_in_container
+                ct = run_in_container(self._path, func_addr, timeout=timeout)
+                if ct and len(ct) > len(raw_trace):
+                    raw_trace = [(a, sz) for a, sz, _, _ in ct]
+            except Exception:
+                pass
+
         # 合并所有 trace（去重）
         trace_set = {}
         for addr, size in raw_trace:
