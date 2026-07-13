@@ -312,7 +312,7 @@ impl InferenceEngine {
                 }
                 Stmt::Call { addr, name, args, .. } => {
                     // 签名驱动参数名
-                    let sig = crate::sigs::lookup(name);
+                    let sig = self.sig_db.lookup(name);
                     let a: Vec<String> = if let Some(s) = sig {
                         args.iter().enumerate().map(|(i, v)| {
                             let val = fmt_val(v);

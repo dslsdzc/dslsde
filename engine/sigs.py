@@ -1,79 +1,71 @@
-"""函数签名数据库
-
-格式: name → (arg_count, variadic)
-"""
+"""函数签名数据库 — (参数名列表, 返回值类型, 是否可变参)"""
 
 SIGS = {
     # 内存
-    "malloc": (1, False), "calloc": (2, False), "realloc": (2, False),
-    "free": (1, False), "memalign": (2, False), "posix_memalign": (3, False),
-    "aligned_alloc": (2, False),
-    "mmap": (6, False), "munmap": (2, False), "brk": (1, False),
-    "sbrk": (1, False),
+    "malloc": (["size"], "void*", False),
+    "calloc": (["nmemb", "size"], "void*", False),
+    "realloc": (["ptr", "size"], "void*", False),
+    "free": (["ptr"], "void", False),
 
     # 字符串
-    "strlen": (1, False), "strcmp": (2, False), "strncmp": (3, False),
-    "strcpy": (2, False), "strncpy": (3, False), "strcat": (2, False),
-    "strncat": (3, False), "strchr": (2, False), "strrchr": (2, False),
-    "strstr": (2, False), "strdup": (1, False), "strndup": (2, False),
-    "memset": (3, False), "memcpy": (3, False), "memmove": (3, False),
-    "memcmp": (3, False),
+    "strlen": (["s"], "size_t", False),
+    "strcmp": (["s1", "s2"], "int", False),
+    "strncmp": (["s1", "s2", "n"], "int", False),
+    "strcpy": (["dst", "src"], "char*", False),
+    "strncpy": (["dst", "src", "n"], "char*", False),
+    "strcat": (["dst", "src"], "char*", False),
+    "strchr": (["s", "c"], "char*", False),
+    "strstr": (["haystack", "needle"], "char*", False),
+    "strdup": (["s"], "char*", False),
+    "memset": (["s", "c", "n"], "void*", False),
+    "memcpy": (["dst", "src", "n"], "void*", False),
+    "memmove": (["dst", "src", "n"], "void*", False),
+    "memcmp": (["s1", "s2", "n"], "int", False),
 
     # IO
-    "open": (3, False), "open64": (3, False), "creat": (2, False),
-    "close": (1, False), "read": (3, False), "write": (3, False),
-    "pread": (4, False), "pwrite": (4, False),
-    "lseek": (3, False), "stat": (2, False), "fstat": (2, False),
-    "lstat": (2, False), "fstat64": (2, False),
-    "fcntl": (3, True), "ioctl": (3, True),
+    "open": (["pathname", "flags", "mode"], "int", False),
+    "creat": (["pathname", "mode"], "int", False),
+    "close": (["fd"], "int", False),
+    "read": (["fd", "buf", "count"], "ssize_t", False),
+    "write": (["fd", "buf", "count"], "ssize_t", False),
+    "lseek": (["fd", "offset", "whence"], "off_t", False),
+    "printf": (["format"], "int", True),
+    "fprintf": (["stream", "format"], "int", True),
+    "sprintf": (["buf", "format"], "int", True),
+    "snprintf": (["buf", "size", "format"], "int", True),
+    "puts": (["s"], "int", False),
+    "putchar": (["c"], "int", False),
+    "perror": (["s"], "void", False),
 
-    # 输出
-    "printf": (1, True), "fprintf": (2, True), "sprintf": (3, True),
-    "snprintf": (3, True), "dprintf": (2, True),
-    "vprintf": (1, False), "vfprintf": (2, False), "vsprintf": (3, False),
-    "vsnprintf": (3, False),
-    "puts": (1, False), "fputs": (2, False), "putchar": (1, False),
-    "putc": (2, False), "fputc": (2, False),
-
-    # 错误
-    "exit": (1, False), "_exit": (1, False), "abort": (0, False),
-    "perror": (1, False), "strerror": (1, False),
-
-    # 信号
-    "signal": (2, False), "sigaction": (3, False),
-    "kill": (2, False), "raise": (1, False),
+    # 文件
+    "fopen": (["pathname", "mode"], "FILE*", False),
+    "fclose": (["stream"], "int", False),
+    "fread": (["ptr", "size", "nmemb", "stream"], "size_t", False),
+    "fwrite": (["ptr", "size", "nmemb", "stream"], "size_t", False),
+    "fgets": (["s", "size", "stream"], "char*", False),
+    "remove": (["pathname"], "int", False),
+    "rename": (["oldpath", "newpath"], "int", False),
 
     # 时间
-    "time": (1, False), "ctime": (1, False), "localtime": (1, False),
-    "gmtime": (1, False), "mktime": (1, False),
-    "clock_gettime": (2, False), "nanosleep": (2, False),
+    "time": (["t"], "time_t", False),
+    "sleep": (["seconds"], "unsigned", False),
 
-    # 线程
-    "pthread_create": (4, False), "pthread_join": (2, False),
-    "pthread_mutex_lock": (1, False), "pthread_mutex_unlock": (1, False),
+    # 进程
+    "exit": (["status"], "void", False),
+    "abort": ([], "void", False),
+    "fork": ([], "pid_t", False),
+    "getpid": ([], "pid_t", False),
+    "getenv": (["name"], "char*", False),
 
-    # 环境
-    "getenv": (1, False), "setenv": (3, False), "unsetenv": (1, False),
-    "execve": (3, False), "execvp": (2, False),
-
-    # 类型转换
-    "atoi": (1, False), "atol": (1, False), "strtol": (3, False),
-    "strtoul": (3, False), "strtod": (2, False),
-
-    # 运行时
-    "setjmp": (1, False), "longjmp": (2, False),
-    "alloca": (1, False),
-
-    # 系统
-    "getpid": (0, False), "getppid": (0, False),
-    "sleep": (1, False), "usleep": (1, False),
-    "sysconf": (1, False),
-
-    # C++
-    "_Znwm": (1, False),  # operator new
-    "_ZdlPv": (1, False), # operator delete
-    "__cxa_atexit": (3, False),
+    # 数学
+    "abs": (["j"], "int", False),
+    "rand": ([], "int", False),
+    "srand": (["seed"], "void", False),
+    "atoi": (["nptr"], "int", False),
+    "atol": (["nptr"], "long", False),
 }
 
+
 def get_sig_map():
+    """返回 Rust SigDb.load() 兼容格式"""
     return SIGS
