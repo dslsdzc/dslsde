@@ -10,7 +10,7 @@ from engine.loader import load as load_binary, Binary
 from engine.function import FunctionAnalyzer, Function
 from engine.database import Database
 from engine.dynamic.runner import Runner
-from engine.dynamic.params import ParamInferrer
+
 
 import dslsde_core
 
@@ -184,24 +184,7 @@ class Model:
 
     def run_function(self, func_addr: int, args: List[int] = None, timeout: float = 1.0) -> str:
         if self.binary is None: return "// no binary loaded"
-        if args is None:
-            func = None
-            for f in self.functions:
-                if f.addr == func_addr: func = f; break
-            if func and func.insn_count > 0:
-                from engine.disasm import Disassembler
-                d = Disassembler(self.binary)
-                pi = ParamInferrer(self.binary, d, self.functions)
-                results = pi.infer(func_addr)
-                args = []
-                if results and results[0]["params"]:
-                    args = [p["value"] for p in results[0]["params"] if isinstance(p["value"], int)][:6]
-        # 多路径执行：用不同参数跑多次，合并路径
-        all_traces = []
-        arg_sets = [args]
-        for alt in [[0]*6, [1]*6, [9999]*6]:
-            if alt != args and alt != [0]*6:  # 避免重复
-                pass
+        if args is None: args = [0]
         runner = Runner(self.binary)
         raw_trace = runner.run(func_addr, args=args, timeout=timeout)
         runner.close()
@@ -214,26 +197,19 @@ class Model:
                 trace_set[addr] = size
         merged = sorted(trace_set.items())
 
-        # 构建富化 trace（从 func_addr 开始，跳过 PLT 桩）
+        # 构建富化 trace：只需要 trace 中出现的指令
+        trace_addrs_set = {addr for addr, _ in merged}
         insn_map = {}
-        for seg in self.binary.exec_segments:
-            for row in self.db.load_instructions(seg.addr, seg.addr + seg.size):
-                insn_map[row["addr"]] = row
-        enriched = []
-        started = False
-        for addr, size in merged:
-            if addr >= func_addr:
-                started = True
-            if started:
-                if addr in insn_map:
-                    row = insn_map[addr]
-                    enriched.append((addr, size, row["mnemonic"], row["operands"]))
-
-        # 字符串表（用于 LEA 解析）
         str_map = {}
         rip_re2 = re.compile(r'rip\s*[-+]\s*0x[0-9a-fA-F]+')
         for seg in self.binary.exec_segments:
-            for row in self.db.load_instructions(seg.addr, seg.addr + seg.size):
+            seg_addrs = [a for a in trace_addrs_set if seg.addr <= a < seg.addr + seg.size]
+            if not seg_addrs:
+                continue
+            min_a, max_a = min(seg_addrs), max(seg_addrs)
+            for row in self.db.load_instructions(min_a, max_a + 16):
+                if row["addr"] in trace_addrs_set:
+                    insn_map[row["addr"]] = row
                 if "lea" in row["mnemonic"] and "rip" in row["operands"]:
                     m = rip_re2.search(row["operands"])
                     if m:
@@ -244,6 +220,9 @@ class Model:
                             ta = row["addr"] + row["size"] - int(part.split("-")[1].strip(), 16)
                         s = self.binary.string_at(ta)
                         if s: str_map[ta] = s
+
+        enriched = [(addr, sz, insn_map[addr]["mnemonic"], insn_map[addr]["operands"])
+                     for addr, sz in merged if addr in insn_map]
 
         ie = dslsde_core.InferenceEngine()
         # 传递二进制数据（用于 switch 恢复等）
@@ -257,10 +236,9 @@ class Model:
         gm = {r.addr: r.name for r in self.binary.relocations if r.name}
         ie.set_got_map(gm)
         ie.set_str_map(str_map)
-                # 构建 PyInsnInfo（用于 CFG）
-        all_rows = []
-        for seg in self.binary.exec_segments:
-            all_rows.extend(self.db.load_instructions(seg.addr, seg.addr + seg.size))
+        # 构建 PyInsnInfo（用于 CFG）
+        func_size = next((f.size for f in self.functions if f.addr <= func_addr < f.addr + f.size), 4096)
+        all_rows = self.db.load_instructions(func_addr, func_addr + min(func_size, 10000))
         py_insns = []
         for row in all_rows:
             mn, op = row["mnemonic"], row["operands"]

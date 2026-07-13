@@ -53,23 +53,27 @@ class ParamInferrer:
         return results
 
     def _find_callers(self, target: int, max_count: int) -> List[int]:
-        """找到所有调用 target 的指令地址"""
+        """找到所有调用 target 的指令地址 (最多扫描 50000 条指令)"""
         callers = []
-        # 扫描可执行段中所有 call 指令
+        scanned = 0
         for seg in self._binary.exec_segments:
             insns = self._disasm.disasm_segment(seg)
             for insn in insns:
-                if insn.mnemonic in ("call", "callq", "bl", "blx"):
-                    op = insn.operands
-                    first = op.split(",")[0].strip()
-                    if first.startswith("0x") or first.startswith("-0x"):
-                        try:
-                            if int(first, 16) == target:
-                                callers.append(insn.addr)
-                                if len(callers) >= max_count:
-                                    return callers
-                        except ValueError:
-                            pass
+                scanned += 1
+                if scanned > 50000:
+                    return callers
+                if insn.mnemonic not in ("call", "callq", "bl", "blx"):
+                    continue
+                op = insn.operands
+                first = op.split(",")[0].strip()
+                if first.startswith("0x") or first.startswith("-0x"):
+                    try:
+                        if int(first, 16) == target:
+                            callers.append(insn.addr)
+                            if len(callers) >= max_count:
+                                return callers
+                    except ValueError:
+                        pass
         return callers
 
     def _analyze_caller(self, call_addr: int, target_addr: int
@@ -110,8 +114,12 @@ class ParamInferrer:
         if func_start >= call_addr:
             return []
 
-        raw = self._binary.read(func_start, call_addr - func_start)
-        if raw is None:
+        size = call_addr - func_start
+        if size > 10000:  # 最多反汇编 10KB
+            size = 10000
+            func_start = call_addr - size
+        raw = self._binary.read(func_start, size)
+        if raw is None or len(raw) < 2:
             return []
 
         insns = self._disasm.disasm(func_start, len(raw))
