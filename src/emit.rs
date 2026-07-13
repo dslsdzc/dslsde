@@ -11,6 +11,21 @@ impl InferenceEngine {
     pub(crate) fn build_addr_map(&self, state: &State, ssa: &SsaContext) -> (HashMap<u64, String>, HashMap<String, String>) {
         // SSA 驱动类型传播 (一次计算, 多处使用)
         let ssa_types = typeprop::infer_types(ssa);
+        // OSPREY 结构体推断: 从 stmts 提取访问模式 → 结构体布局
+        let struct_accesses = crate::structr::collect_accesses(&state.stmts);
+        let mut struct_map: HashMap<String, crate::structr::StructInfo> = HashMap::new();
+        // 按基址分组推断
+        let mut by_base: HashMap<String, Vec<crate::structr::MemAccess>> = HashMap::new();
+        for acc in &struct_accesses {
+            by_base.entry(acc.base_reg.clone()).or_default().push(acc.clone());
+        }
+        for (base, accesses) in &by_base {
+            if accesses.len() >= 2 {
+                if let Some(si) = crate::structr::infer_struct(base, accesses) {
+                    struct_map.insert(base.clone(), si);
+                }
+            }
+        }
     fn type_str(vt: &VarType) -> &'static str {
         match vt {
             VarType::Ptr => "void*",
@@ -151,48 +166,22 @@ impl InferenceEngine {
                 else if p.returned && !p.inc1 { "sum".into() }
                 else if p.from_arg { format!("arg_{}", -off) }
                 else { format!("v{}", pats.keys().filter(|&&k| k < off).count() + 1) };
-            var_types.insert(name.clone(), type_str(&p.vtype).to_string());
+            // SSA 类型覆盖: 通过源寄存器反查 SSA 类型
+            let ssa_t = state.stmts.iter().find_map(|s| {
+                if let Stmt::Assign { dst, info, .. } = s {
+                    if so(dst) == Some(off) {
+                        let canon = crate::ir::ro(info.trim()).unwrap_or(info.trim());
+                        reg_latest.get(canon).and_then(|sid| ssa_types.get(sid))
+                    } else { None }
+                } else { None }
+            });
+            let final_t = ssa_t.unwrap_or(&p.vtype);
+            var_types.insert(name.clone(), type_str(final_t).to_string());
             vn.insert(off, name);
         }
 
-        // Struct field inference: 检测连续对齐偏移 → 重命名为 field_N
-        {
-            let mut sorted_off: Vec<i64> = vn.keys().copied().collect();
-            sorted_off.sort();
-            let mut gs = 0usize;
-            for i in 1..sorted_off.len() {
-                let gap = (sorted_off[i] - sorted_off[i - 1]).abs();
-                if gap != 4 && gap != 8 {
-                    let cnt = i - gs;
-                    if cnt >= 2 {
-                        for j in 0..cnt {
-                            let off = sorted_off[gs + j];
-                            if let Some(old) = vn.get(&off).filter(|n| n.starts_with('v')).cloned() {
-                                let new = format!("field_{}", j);
-                                if let Some(t) = var_types.remove(&old) {
-                                    var_types.insert(new.clone(), t);
-                                }
-                                vn.insert(off, new);
-                            }
-                        }
-                    }
-                    gs = i;
-                }
-            }
-            let cnt = sorted_off.len() - gs;
-            if cnt >= 2 {
-                for j in 0..cnt {
-                    let off = sorted_off[gs + j];
-                    if let Some(old) = vn.get(&off).filter(|n| n.starts_with('v')).cloned() {
-                        let new = format!("field_{}", j);
-                        if let Some(t) = var_types.remove(&old) {
-                            var_types.insert(new.clone(), t);
-                        }
-                        vn.insert(off, new);
-                    }
-                }
-            }
-        }
+        // Struct field inference REMOVED: 栈变量不适合用 field_N 命名
+        // 结构体字段命名只在非栈基址的 [base+N] 访问中处理
 
         // Pass 2: generate output
         let mut m: HashMap<u64, String> = HashMap::new();
@@ -288,24 +277,33 @@ impl InferenceEngine {
                             }
                         }
                     }
-                    // 数组访问检测: info 中含 scaled-index → 格式化为 arr[idx]
-                    if let Some(arr_str) = crate::array::format_array_access(info) {
-                        m.insert(*addr, format!("// {} = {}", dst, arr_str));
-                    }
-                    // 数组访问检测: dst 含 scaled-index → 格式化为 arr[idx] = val
-                    if let Some(arr_str) = crate::array::format_array_access(dst) {
-                        m.insert(*addr, format!("{} = {}", arr_str, val_s(val, info)));
-                    }
-                    // 结构体字段检测: dst 为 [base + N] → 格式化为 base->field_N
-                    if dst.contains('[') && !dst.starts_with("[rbp") {
-                        if let Some((base, off)) = crate::structr::parse_field_access(dst) {
-                            m.insert(*addr, format!("{}->field_{:#x} = {}", base, off, val_s(val, info)));
+                    // 数组/结构体访问: 仅对非栈变量生效
+                    if !dst.starts_with("[rbp") {
+                        // 数组访问检测
+                        if dst.contains('[') {
+                            if let Some(arr_str) = crate::array::format_array_access(info) {
+                                m.insert(*addr, format!("// {} = {}", dst, arr_str));
+                            }
+                            if let Some(arr_str) = crate::array::format_array_access(dst) {
+                                m.insert(*addr, format!("{} = {}", arr_str, val_s(val, info)));
+                            }
                         }
-                    }
-                    // 结构体字段检测: info 为 [base + N] → 格式化为 field 加载
-                    if info.contains('[') && !info.starts_with("[rbp") {
-                        if let Some((base, off)) = crate::structr::parse_field_access(info) {
-                            m.insert(*addr, format!("// {} = {}->field_{:#x}", dst, base, off));
+                        // 结构体字段检测
+                        if dst.contains('[') {
+                            if let Some((base, off)) = crate::structr::parse_field_access(dst) {
+                                let field = struct_map.get(&base).and_then(|si| {
+                                    si.fields.iter().find(|f| f.offset == off).map(|f| f.field_name.clone())
+                                }).unwrap_or_else(|| format!("field_{:#x}", off));
+                                m.insert(*addr, format!("{}->{} = {}", base, field, val_s(val, info)));
+                            }
+                        }
+                        if info.contains('[') && info != dst {
+                            if let Some((base, off)) = crate::structr::parse_field_access(info) {
+                                let field = struct_map.get(&base).and_then(|si| {
+                                    si.fields.iter().find(|f| f.offset == off).map(|f| f.field_name.clone())
+                                }).unwrap_or_else(|| format!("field_{:#x}", off));
+                                m.insert(*addr, format!("// {} = {}->{}", dst, base, field));
+                            }
                         }
                     }
                 }
