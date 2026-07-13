@@ -6,6 +6,7 @@ use crate::cfg::build_cfg_internal;
 use crate::ssa::{SsaContext, SsaOp};
 use crate::dce;
 use crate::typeflow;
+use crate::deobfuscate;
 use crate::switch;
 use crate::sigs::SigDb;
 
@@ -61,6 +62,8 @@ impl InferenceEngine {
         // Switch 恢复
         let jump_tables = if self.binary_data.is_empty() { Vec::new() }
                           else { switch::recover_jump_tables(&self.binary_data, self.text_base, &native) };
+        // CFF 反混淆: 检测 dispatcher → 恢复块顺序
+        let deobf_info = deobfuscate::deobfuscate(&cfg, &trace_addrs, &state.stmts);
         self.emit_structured(&state, &cfg, &trace_addrs, &var_types, &jump_tables)
     }
 }

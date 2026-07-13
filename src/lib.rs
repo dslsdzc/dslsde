@@ -14,6 +14,7 @@ pub mod array;
 pub mod structr;
 pub mod typeflow;
 pub mod typeprop;
+pub mod deobfuscate;
 pub mod sigs;
 pub mod infer;
 
