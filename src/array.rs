@@ -44,7 +44,8 @@ pub fn detect_array_accesses(insns: &[PyInsnInfo]) -> Vec<ArrayAccess> {
 
 /// Intel 语法: [rax + rcx*8]
 fn parse_mem_ref(op: &str) -> Option<(String, String, u32)> {
-    let re = regex_lite::Regex::new(r"\[(\w+)\s*\+\s*(\w+)\s*\*\s*(\d+)\]").ok()?;
+    // [base + idx*scale + offset] 或 [base + idx*scale - offset]
+    let re = regex_lite::Regex::new(r"\[(\w+)\s*\+\s*(\w+)\s*\*\s*(\d+)(?:\s*([-+])\s*(0x[0-9a-fA-F]+|\d+))?\]").ok()?;
     let caps = re.captures(op)?;
     let scale: u32 = caps[3].parse().ok()?;
     Some((caps[1].to_string(), caps[2].to_string(), scale))
@@ -73,8 +74,24 @@ pub fn group_by_base(accesses: &[ArrayAccess]) -> Vec<(String, Vec<ArrayAccess>)
 }
 
 /// 将操作数字符串转为数组访问表示
-/// 例如 "[rax + rcx*8]" → Some("rax[rcx]")
-/// 同时支持完整指令 "mov rdx, [rax + rcx*8]" → Some("rax[rcx]")
+/// 例如 "[rax + rcx*8]" → Some(("rax", "rcx", None))
+/// "[rbp + rcx*4 - 0x20]" → Some(("rbp", "rcx", Some(-0x20)))
+pub fn parse_array_ref(op: &str) -> Option<(String, String, Option<i64>)> {
+    let re = regex_lite::Regex::new(r"\[(\w+)\s*\+\s*(\w+)\s*\*\s*(\d+)(?:\s*([-+])\s*(0x[0-9a-fA-F]+|\d+))?\]").ok()?;
+    let caps = re.captures(op)?;
+    let idx = caps[2].to_string();
+    let offset = caps.get(4).and_then(|m| {
+        let sign = m.as_str();
+        let val_str = caps.get(5)?.as_str();
+        let val = if let Some(h) = val_str.strip_prefix("0x") {
+            i64::from_str_radix(h, 16).ok()
+        } else { val_str.parse::<i64>().ok() };
+        if sign == "-" { val.map(|v| -v) } else { val }
+    });
+    Some((caps[1].to_string(), idx, offset))
+}
+
+/// 将操作数字符串转为数组访问表示
 pub fn format_array_access(op: &str) -> Option<String> {
     if let Some((base, idx, _scale)) = parse_mem_ref(op) {
         return Some(format!("{}[{}]", base, idx));

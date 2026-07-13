@@ -245,6 +245,24 @@ impl InferenceEngine {
                             if let Some(name) = vn.get(&off) { rv.insert(dst.clone(), name.clone()); }
                         }
                     }
+                    // 数组访问检测: info 含 scaled-index 模式 → arr_name[idx]
+                    if info.contains('*') && info.contains("[rbp") {
+                        if let Some((_, idx_clean, _)) = crate::array::parse_array_ref(info) {
+                            let off = so(info).unwrap_or(0);
+                            if let Some(arr_name) = vn.get(&off) {
+                                let rhs = val_s(val, info);
+                                // 存储: arr_name[idx] = val
+                                if let Some(dst_r) = ro(dst) {
+                                    if !dst_r.is_empty() {
+                                        m.insert(*addr, format!("// {} = {}[{}]", dst_r, arr_name, idx_clean));
+                                    }
+                                } else {
+                                    m.insert(*addr, format!("{}[{}] = {}", arr_name, idx_clean, rhs));
+                                }
+                            }
+                        }
+                    }
+                    // 结构体字段检测: dst 为 [base + N] → 格式化为 base->field_N (OSPREY)
                     if dst.starts_with("[rbp") {
                         let Some(off) = so(dst) else { continue; };
                         let Some(name) = vn.get(&off) else { continue; };

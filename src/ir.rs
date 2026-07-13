@@ -61,7 +61,25 @@ pub fn iv(s:&str)->Option<i64>{let s=s.trim();if s.is_empty(){return None;}if le
 pub fn fmt_val(v:&ValueDomain)->String{match v{ValueDomain::Signed(x)=>sf(*x),ValueDomain::Pointer(a)=>format!("global_{:#x}",a),ValueDomain::String(s)=>format!("\"{}\"",s.replace('\n',"\\n")),ValueDomain::Unknown=>"?".into(),ValueDomain::Unsigned(x)=>sf(*x as i64),ValueDomain::Boolean=>"1".into()}}
 pub fn sf(v:i64)->String{if v==0{"0".into()}else if v>0&&v<=9999{v.to_string()}else if v<0&&v>=-9999{v.to_string()}else if v<0{format!("-{:#x}",-v)}else{format!("{:#x}",v)}}
 pub fn ro(op:&str)->Option<&str>{Some(match op{"eax"|"rax"=>"rax","ebx"|"rbx"=>"rbx","ecx"|"rcx"=>"rcx","edx"|"rdx"=>"rdx","esi"|"rsi"=>"rsi","edi"|"rdi"=>"rdi","rbp"=>"rbp","rsp"=>"rsp","r8d"|"r8"=>"r8","r9d"|"r9"=>"r9","r10d"|"r10"=>"r10","r11d"|"r11"=>"r11","r12d"|"r12"=>"r12","r13d"|"r13"=>"r13","r14d"|"r14"=>"r14","r15d"|"r15"=>"r15",_=>return None})}
-pub fn so(op:&str)->Option<i64>{let r=regex_lite::Regex::new(r"\[rbp\s*([-+])\s*(0x[0-9a-fA-F]+|\d+)\]").ok()?;let c=r.captures(op)?;Some((if&c[1]=="+"{1}else{-1})*i64::from_str_radix(c[2].strip_prefix("0x").unwrap_or(&c[2]),if c[2].starts_with("0x"){16}else{10}).ok()?)}
+pub fn so(op:&str)->Option<i64>{
+    // 标准: [rbp ± 0xN] or [rbp ± N]
+    if let Ok(r) = regex_lite::Regex::new(r"\[rbp\s*([-+])\s*(0x[0-9a-fA-F]+|\d+)\]") {
+        if let Some(c) = r.captures(op) {
+            return Some((if &c[1]=="+"{1}else{-1})*i64::from_str_radix(c[2].strip_prefix("0x").unwrap_or(&c[2]),if c[2].starts_with("0x"){16}else{10}).ok()?);
+        }
+    }
+    // 含索引: [rbp + reg*scale ± 0xN]
+    if let Ok(r) = regex_lite::Regex::new(r"\[rbp\s*[-+]\s*\w+\s*\*\s*\d+\s*([-+])\s*(0x[0-9a-fA-F]+|\d+)\]") {
+        if let Some(c) = r.captures(op) {
+            return Some((if &c[1]=="+"{1}else{-1})*i64::from_str_radix(c[2].strip_prefix("0x").unwrap_or(&c[2]),if c[2].starts_with("0x"){16}else{10}).ok()?);
+        }
+    }
+    // 纯索引无偏移: [rbp + reg*scale] → offset = 0
+    if regex_lite::Regex::new(r"\[rbp\s*[-+]\s*\w+\s*\*\s*\d+\]").ok()?.is_match(op) {
+        return Some(0);
+    }
+    None
+}
 pub fn op_sym_rs(mn:&str)->&str{match mn{"add"=>"+","sub"=>"-","imul"=>"*","xor"=>"^","and"=>"&","or"=>"|",_=>"?"}}
 pub fn rn(addr:u64,fm:&HashMap<u64,String>)->String{fm.get(&addr).cloned().unwrap_or_else(||format!("sub_{:x}",addr))}
 pub fn cstr(mn:&str)->&str{match mn{"jz"|"je"=>"==","jne"|"jnz"=>"!=","jg"=>">","jge"=>">=","jl"=>"<","jle"=>"<=","ja"=>"(u)>","jb"=>"(u)<",_=>mn}}
