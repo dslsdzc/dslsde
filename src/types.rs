@@ -117,6 +117,20 @@ pub enum VarType { Int, UInt, Ptr, CharPtr, Bool, Unknown }
 
 impl Default for VarType { fn default() -> Self { VarType::Unknown } }
 
+/// Type → VarType 转换 (有损)
+pub fn type_to_vartype(t: &Type) -> VarType {
+    match t {
+        Type::Ptr(inner) => match inner.as_ref() {
+            Type::UInt(8) => VarType::CharPtr,
+            _ => VarType::Ptr,
+        }
+        Type::Int(_) => VarType::Int,
+        Type::UInt(_) => VarType::UInt,
+        Type::Bool => VarType::Bool,
+        _ => VarType::Unknown,
+    }
+}
+
 /// VarType → Type 转换
 pub fn from_var(vt: &VarType) -> Type {
     match vt {

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ir::*;
 use crate::infer::InferenceEngine;
 use crate::cfg::Cfg;
-use crate::types::{VarType, infer_var_type};
+use crate::types::{VarType, type_to_vartype, infer_var_type};
 use crate::ssa::{SsaContext, SsaOp};
 use crate::switch::JumpTable;
 use crate::typeprop;
@@ -90,8 +90,9 @@ impl InferenceEngine {
                     if p.vtype == VarType::Unknown {
                         if let Some(&sid) = state.ssa_ids.get(addr) {
                             if let Some(ssa_t) = ssa_types.get(&sid) {
-                                if *ssa_t != VarType::Unknown {
-                                    p.vtype = ssa_t.clone();
+                                let vt = type_to_vartype(ssa_t);
+                                if vt != VarType::Unknown {
+                                    p.vtype = vt;
                                 }
                             }
                         }
@@ -168,19 +169,21 @@ impl InferenceEngine {
                 else { format!("v{}", pats.keys().filter(|&&k| k < off).count() + 1) };
             // SSA 类型：仅在 p.vtype 为 Unknown 时覆盖（避免寄存器最终类型污染）
             let final_t = if p.vtype != VarType::Unknown {
-                &p.vtype
+                p.vtype.clone()
             } else {
                 let ssa_t = state.stmts.iter().find_map(|s| {
                     if let Stmt::Assign { dst, info, .. } = s {
                         if so(dst) == Some(off) {
                             let canon = crate::ir::ro(info.trim()).unwrap_or(info.trim());
-                            reg_latest.get(canon).and_then(|sid| ssa_types.get(sid))
+                            reg_latest.get(canon).and_then(|sid| {
+                                ssa_types.get(sid).map(|t| type_to_vartype(t))
+                            })
                         } else { None }
                     } else { None }
                 });
-                ssa_t.unwrap_or(&p.vtype)
+                ssa_t.unwrap_or(p.vtype.clone())
             };
-            var_types.insert(name.clone(), type_str(final_t).to_string());
+            var_types.insert(name.clone(), type_str(&final_t).to_string());
             vn.insert(off, name);
         }
 

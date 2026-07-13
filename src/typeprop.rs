@@ -1,95 +1,86 @@
-/// dslsde — SSA 驱动类型传播
+/// dslsde — SSA 驱动类型传播 (Type 组合版本)
 ///
 /// TRex/TIE 启发: 为每个 SSA 值分配类型变量，
 /// 通过约束生成+求解推断变量类型。
 ///
-/// 约束规则:
-///   BinOp(add, a, b) → a:int, b:int, result:int
-///   Call(func, args) → result = func.ret_type (从签名)
-///   PtrDeref(p) → p:ptr(T), result:T
-///   Assign(a, b) → a = b (类型一致)
+/// 现在输出 Type 而非 VarType:
+///   Pointer(0x293b0) → Type::Ptr(Type::Void) → "void*"
+///   Signed(208) → Type::Int(32) → "int"
 
 use std::collections::HashMap;
 use crate::ssa::{SsaContext, SsaOp};
-use crate::types::VarType;
+use crate::types::{Type, VarType};
 
 /// 为 SSA 中的每个值推断类型
-pub fn infer_types(ssa: &SsaContext) -> HashMap<u32, VarType> {
-    let mut types: HashMap<u32, VarType> = HashMap::new();
+pub fn infer_types(ssa: &SsaContext) -> HashMap<u32, Type> {
+    let mut types: HashMap<u32, Type> = HashMap::new();
     let mut changed = true;
 
-    // v0 = Unknown
-    types.insert(0, VarType::Unknown);
+    types.insert(0, Type::Int(32));
 
-    // 迭代传播直到稳定
     while changed {
         changed = false;
         for v in ssa.values() {
             let inferred = match &v.op {
                 SsaOp::Assign => {
-                    // 从输入传播
                     if let Some(&input) = v.inputs.first() {
-                        types.get(&input).cloned().unwrap_or(VarType::Unknown)
+                        types.get(&input).cloned().unwrap_or(Type::Int(32))
                     } else {
                         v.val.as_ref().map(|val| match val {
-                            crate::ir::ValueDomain::Pointer(_) => VarType::Ptr,
-                            crate::ir::ValueDomain::String(_) => VarType::CharPtr,
-                            crate::ir::ValueDomain::Signed(_) => VarType::Int,
-                            _ => VarType::Unknown,
-                        }).unwrap_or(VarType::Unknown)
+                            crate::ir::ValueDomain::Pointer(_) => Type::Ptr(Box::new(Type::Void)),
+                            crate::ir::ValueDomain::String(_) => Type::Ptr(Box::new(Type::UInt(8))),
+                            crate::ir::ValueDomain::Signed(_) => Type::Int(32),
+                            _ => Type::Int(32),
+                        }).unwrap_or(Type::Int(32))
                     }
                 }
                 SsaOp::BinOp(name) => {
-                    // 算术运算 → Int
                     match name.as_str() {
-                        // 指针运算: base + idx*scale → 保持 base 类型
                         "add" | "sub" => {
                             let t0 = v.inputs.first()
                                 .and_then(|&i| types.get(&i))
-                                .cloned().unwrap_or(VarType::Int);
+                                .cloned().unwrap_or(Type::Int(32));
                             match t0 {
-                                VarType::Ptr | VarType::CharPtr => t0,
-                                _ => VarType::Int,
+                                Type::Ptr(_) | Type::Array(_, _) => t0,
+                                _ => Type::Int(32),
                             }
                         }
-                        // 位运算/比较 → Int
-                        "xor" | "and" | "or" | "imul" => VarType::Int,
-                        _ => VarType::Int,
+                        _ => Type::Int(32),
                     }
                 }
-                SsaOp::Load => VarType::Ptr,
-                SsaOp::Store => VarType::Unknown,
+                SsaOp::Load => Type::Ptr(Box::new(Type::Void)),
+                SsaOp::Store => Type::Int(32),
                 SsaOp::Call(ret_type) => {
                     match ret_type.as_str() {
-                        "malloc" | "calloc" | "realloc" | "strdup"
-                        | "memcpy" | "fopen" | "getenv" => VarType::Ptr,
-                        "strlen" | "strcmp" | "atoi" | "abs" | "open" => VarType::Int,
-                        "printf" | "puts" | "close" | "read" | "write" => VarType::Int,
-                        "exit" | "abort" | "free" => VarType::Unknown,
-                        _ => VarType::Unknown,
+                        "malloc" | "calloc" | "realloc" | "strdup" | "memcpy" | "fopen" | "getenv" | "mmap" =>
+                            Type::Ptr(Box::new(Type::Void)),
+                        "strlen" => Type::UInt(64),
+                        "strcmp" | "strncmp" | "atoi" | "abs" | "open" | "close" | "printf" | "puts" | "read" | "write" =>
+                            Type::Int(32),
+                        "exit" | "abort" | "free" => Type::Void,
+                        _ => Type::Int(32),
                     }
                 }
                 SsaOp::Multiequal(args) => {
-                    // phi: 从所有输入取最常见类型
-                    let mut counts = HashMap::new();
+                    let mut counts: HashMap<Type, usize> = HashMap::new();
                     for &input in args {
-                        let t = types.get(&input).cloned().unwrap_or(VarType::Unknown);
+                        let t = types.get(&input).cloned().unwrap_or(Type::Int(32));
                         *counts.entry(t).or_insert(0) += 1;
                     }
                     counts.into_iter()
                         .max_by_key(|(_, c)| *c)
                         .map(|(t, _)| t)
-                        .unwrap_or(VarType::Unknown)
+                        .unwrap_or(Type::Int(32))
                 }
                 SsaOp::GvnExpr(_) => {
                     v.inputs.first()
                         .and_then(|&i| types.get(&i))
-                        .cloned().unwrap_or(VarType::Unknown)
+                        .cloned().unwrap_or(Type::Int(32))
                 }
             };
 
             let old_val = types.insert(v.id, inferred.clone());
-            if old_val != Some(inferred.clone()) {
+            if old_val != Some(inferred) {
                 changed = true;
             }
         }
@@ -98,8 +89,8 @@ pub fn infer_types(ssa: &SsaContext) -> HashMap<u32, VarType> {
     types
 }
 
-/// 将 VarType 转为 C 类型字符串
-pub fn type_to_c(vt: VarType) -> &'static str {
+/// VarType → Type (兼容旧接口)
+pub fn type_to_c(vt: &VarType) -> &'static str {
     match vt {
         VarType::Ptr => "void*",
         VarType::CharPtr => "char*",
