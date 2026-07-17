@@ -41,29 +41,52 @@ impl InferenceEngine {
     }
     pub fn infer_structured(&mut self, trace: Vec<(u64, u32, String, String)>,
                             args: Vec<i64>, py_insns: Vec<PyRef<PyInsnInfo>>) -> String {
+        self.infer_structured_impl(trace, args, py_insns, vec![])
+    }
+
+    /// 多 trace 合并反编译 (并行追踪多个参数组合)
+    #[pyo3(signature = (trace, args, py_insns, extra_traces, extra_args))]
+    pub fn infer_structured_multi(&mut self, trace: Vec<(u64, u32, String, String)>,
+                                   args: Vec<i64>, py_insns: Vec<PyRef<PyInsnInfo>>,
+                                   extra_traces: Vec<Vec<(u64, u32, String, String)>>,
+                                   extra_args: Vec<Vec<i64>>) -> String {
+        self.infer_structured_impl(trace, args, py_insns, extra_traces)
+    }
+
+    fn infer_structured_impl(&mut self, trace: Vec<(u64, u32, String, String)>,
+                              args: Vec<i64>, py_insns: Vec<PyRef<PyInsnInfo>>,
+                              extra_traces: Vec<Vec<(u64, u32, String, String)>>) -> String {
         let entry = trace.first().map(|t| t.0).unwrap_or(0);
         let mut ssa = SsaContext::new(entry);
+        // 主 trace
         let mut state = self.build_state(&trace, &args, &mut ssa);
+        // 额外 trace: 合并 SSA（在 passes 之前，phi 节点不被 passes 影响）
+        for extra in &extra_traces {
+            if extra.is_empty() { continue; }
+            let mut extra_ssa = SsaContext::new(entry);
+            let _extra_state = self.build_state(extra, &vec![0], &mut extra_ssa);
+            crate::ssa::merge_traces(&mut ssa, &extra_ssa, entry);
+        }
         for i in 0..5 {
             state.iteration = i; state.changed = false;
             self.pass_noise_filter(&mut state); self.pass_value_domain(&mut state);
             self.pass_constraint(&mut state); self.pass_arg_purify(&mut state);
             if !state.changed { break; }
         }
-        // 跨函数类型传播（passes 之后，避免 passes 改写 stmts 后信息丢失）
+        // 跨函数类型传播（passes 之后）
         typeflow::propagate_types(&mut state, &self.sig_db);
-        // 多 trace 合并预留
-        // 死变量消除（移除无引用的寄存器赋值）
+        // 死变量消除
         let _dead = dce::eliminate(&mut state, &ssa);
         let (addr_map, var_types) = self.build_addr_map(&state, &ssa);
         state.addr_map = addr_map;
         let native: Vec<PyInsnInfo> = py_insns.iter().map(|r| (*r).clone()).collect();
         let cfg = build_cfg_internal(&native);
-        let trace_addrs: HashSet<u64> = trace.iter().map(|t| t.0).collect();
-        // Switch 恢复
+        let mut trace_addrs: HashSet<u64> = trace.iter().map(|t| t.0).collect();
+        for extra in &extra_traces {
+            trace_addrs.extend(extra.iter().map(|t| t.0));
+        }
         let jump_tables = if self.binary_data.is_empty() { Vec::new() }
                           else { switch::recover_jump_tables(&self.binary_data, self.text_base, &native) };
-        // 间接跳转 → CFG 边（CFF dispatcher 检测需要）
         let mut cfg = cfg;
         for jt in &jump_tables {
             if let Some(block) = cfg.blocks.get_mut(&jt.addr) {
@@ -74,7 +97,6 @@ impl InferenceEngine {
                 }
             }
         }
-        // CFF 反混淆: 检测 dispatcher → 恢复块顺序
         let deobf_info = deobfuscate::deobfuscate(&cfg, &trace_addrs, &state.stmts);
         let result = self.emit_structured(&state, &cfg, &trace_addrs, &var_types, &jump_tables, &deobf_info);
         if deobf_info.total_paths > 0 {

@@ -9,6 +9,7 @@ from collections import defaultdict
 from engine.loader import load as load_binary, Binary
 from engine.function import FunctionAnalyzer, Function
 from engine.database import Database
+
 from engine.dynamic.runner import Runner
 
 
@@ -233,6 +234,23 @@ class Model:
 
         enriched = [(addr, sz, insn_map[addr]["mnemonic"], insn_map[addr]["operands"])
                      for addr, sz in merged if addr in insn_map]
+        # 多 trace 合并（并行执行）
+        extra_traces = []
+        extra_args_list = []
+        
+        for alt_args in [[1, 0, 0, 0, 0, 0], [0, 1, 0, 0, 0, 0]]:
+            try:
+                r2 = Runner(self.binary)
+                t2 = r2.run(func_addr, args=alt_args, timeout=min(timeout, 0.3))
+                r2.close()
+                if t2 and len(t2) > 5:
+                    enr = [(a, sz, insn_map[a]["mnemonic"], insn_map[a]["operands"])
+                           for a, sz in t2 if a in insn_map]
+                    if enr:
+                        extra_traces.append(enr)
+                        extra_args_list.append(alt_args)
+            except:
+                pass
 
         ie = dslsde_core.InferenceEngine()
         # 传递二进制数据（用于 switch 恢复等）
@@ -262,4 +280,8 @@ class Model:
                 mn in ("jmp","jmpq"),
                 (mn.startswith("j") and mn not in ("jmp","jmpq","call","callq")),
                 (mn in ("call","callq","jmp","jmpq") and "[" in op)))
+        if extra_traces:
+            return ie.infer_structured_multi(
+                enriched, [int(a) for a in args], py_insns,
+                extra_traces, extra_args_list)
         return ie.infer_structured(enriched, [int(a) for a in args], py_insns)
