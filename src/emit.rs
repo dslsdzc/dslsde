@@ -421,6 +421,13 @@ impl InferenceEngine {
                     }
                 }
             }
+            // DCE: 移除声明了但从未使用的栈变量
+            first_assign.retain(|name, addr| {
+                state.addr_map.iter().any(|(&a, line)| {
+                    if a == *addr { return false; } // 跳过声明行
+                    line.contains(name) || line.contains(&format!("{}[", name))
+                })
+            });
             let mut var_names: Vec<&String> = first_assign.keys().collect();
             var_names.sort();
             if !var_names.is_empty() {
@@ -493,6 +500,13 @@ impl InferenceEngine {
                 }
             }
         }
+        // DCE: 移除声明了但从未使用的栈变量
+        first_assign.retain(|name, addr| {
+            state.addr_map.iter().any(|(&a, line)| {
+                if a == *addr { return false; }
+                line.contains(name) || line.contains(&format!("{}[", name))
+            })
+        });
         // 输出变量声明块（跳过金丝雀变量）
         let mut var_names: Vec<&String> = first_assign.keys().collect();
         var_names.sort();
