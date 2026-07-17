@@ -301,8 +301,13 @@ impl InferenceEngine {
                                 if keep {
                                     // 格式化: 说明值来源
                                     let source = match &vv.op {
-                                        SsaOp::BinOp(name) => format!("{} {} {}", ssa.value_name(sid), name,
-                                            vv.inputs.iter().map(|&i| ssa.value_name(i)).collect::<Vec<_>>().join(", ")),
+                                        SsaOp::BinOp(name) => {
+                                        let ins: Vec<String> = vv.inputs.iter().map(|&i| ssa.value_name(i)).collect();
+                                        if ins.len() == 2 {
+                                            let op_sym = match name.as_str() { "add"=>"+","sub"=>"-","imul"=>"*","xor"=>"^","and"=>"&","or"=>"|",_=>name };
+                                            format!("{} = {} {} {}", ssa.value_name(sid), ins[0], op_sym, ins[1])
+                                        } else { format!("{} {}", name, ins.join(", ")) }
+                                    }
                                         _ => {
                                             if desc.contains("__readfsqword") { desc.clone() }
                                             else { format!("{} <- {}", ssa.value_name(sid), desc) }
