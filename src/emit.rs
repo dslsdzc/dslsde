@@ -136,27 +136,35 @@ impl InferenceEngine {
                 }
             }
         }
-        for stmt in &state.stmts {
-            if let Stmt::Assign { dst, info, .. } = stmt {
-                if dst == "rax" {
-                    // rax = [rbp+X] → 该变量被返回
-                    if let Some(off) = so(info) { pats.entry(off).or_default().returned = true; }
-                    // rax = reg → 如果 reg 指向变量
-                    if let Some(r) = ro(info) {
-                        // 查找最近一次加载该 reg 的栈变量
-                        for s2 in state.stmts.iter().rev() {
-                            if let Stmt::Assign { dst: d2, info: i2, .. } = s2 {
-                                if d2 == r && i2.starts_with("[rbp") {
-                                    if let Some(off) = so(i2) {
-                                        pats.entry(off).or_default().returned = true;
+        // 从 ret 倒找最后一次 rax 加载 → 真正的返回值
+        let mut last_rax_slot: Option<i64> = None;
+        let ret_idx = state.stmts.iter().rposition(|s| matches!(s, Stmt::Return { .. }));
+        if let Some(start) = ret_idx {
+            for stmt in state.stmts[..start].iter().rev() {
+                match stmt {
+                    Stmt::Assign { dst, info, .. } if dst == "rax" => {
+                        if let Some(off) = so(info) { last_rax_slot = Some(off); break; }
+                        if let Some(r) = ro(info) {
+                            for s2 in state.stmts[..start].iter().rev() {
+                                if let Stmt::Assign { dst: d2, info: i2, .. } = s2 {
+                                    if d2 == r && i2.starts_with("[rbp") {
+                                        if let Some(off) = so(i2) { last_rax_slot = Some(off); }
+                                        break;
                                     }
-                                    break;
                                 }
                             }
+                            break;
                         }
+                        break;
                     }
+                    Stmt::Call { .. } => break,
+                    _ => {}
                 }
+                if last_rax_slot.is_some() { break; }
             }
+        }
+        if let Some(off) = last_rax_slot {
+            pats.entry(off).or_default().returned = true;
         }
 
         // Semantic naming + type mapping
