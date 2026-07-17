@@ -188,8 +188,28 @@ impl InferenceEngine {
             vn.insert(off, name);
         }
 
-        // Struct field inference REMOVED: 栈变量不适合用 field_N 命名
-        // 结构体字段命名只在非栈基址的 [base+N] 访问中处理
+        // Struct field inference: 连续对齐偏移 + 常量赋值 → field_N
+        {
+            let mut sorted: Vec<i64> = vn.keys().copied().filter(|off| vn.get(off).map_or(false, |n| n.starts_with('v'))).collect();
+            sorted.sort();
+            let mut i = 0;
+            while i < sorted.len() {
+                let mut j = i + 1;
+                while j < sorted.len() && (sorted[j] - sorted[j-1]).abs() <= 8 { j += 1; }
+                if j - i >= 3 {
+                    for k in 0..(j - i) {
+                        let off = sorted[i + k];
+                        if let Some(old) = vn.get(&off).filter(|n| n.starts_with('v')).cloned() {
+                            if let Some(t) = var_types.remove(&old) {
+                                var_types.insert(format!("field_{}", k), t);
+                            }
+                            vn.insert(off, format!("field_{}", k));
+                        }
+                    }
+                }
+                i = j;
+            }
+        }
 
         // Pass 2: generate output
         let mut m: HashMap<u64, String> = HashMap::new();
