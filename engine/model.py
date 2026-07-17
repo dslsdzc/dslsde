@@ -247,7 +247,9 @@ class Model:
         ie.set_got_map(gm)
         ie.set_str_map(str_map)
         # 构建 PyInsnInfo（用于 CFG）
-        func_size = next((f.size for f in self.functions if f.addr <= func_addr < f.addr + f.size), 4096)
+        # 找精确匹配的函数 (addr 完全等于 func_addr)
+        func = next((f for f in self.functions if f.addr == func_addr), None)
+        func_size = func.size if func else 4096
         all_rows = self.db.load_instructions(func_addr, func_addr + min(func_size, 10000))
         py_insns = []
         for row in all_rows:
