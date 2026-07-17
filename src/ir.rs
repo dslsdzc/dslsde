@@ -58,7 +58,7 @@ pub fn id(d: u64) -> String { "  ".repeat(d as usize) }
 pub fn sp(op:&str)->(&str,&str){if let Some(p)=op.find(','){(op[..p].trim(),op[p+1..].trim())}else{(op,"")}}
 pub fn dst_or_src<'a>(d:&'a str,s:&'a str)->&'a str{if!d.is_empty(){d}else{s}}
 pub fn iv(s:&str)->Option<i64>{let s=s.trim();if s.is_empty(){return None;}if let Some(h)=s.strip_prefix("0x").or_else(||s.strip_prefix("-0x")){let neg=s.starts_with('-');i64::from_str_radix(h,16).ok().map(|v|if neg{-v}else{v})}else{s.parse().ok()}}
-pub fn fmt_val(v:&ValueDomain)->String{match v{ValueDomain::Signed(x)=>sf(*x),ValueDomain::Pointer(a)=>format!("global_{:#x}",a),ValueDomain::String(s)=>format!("\"{}\"",s.replace('\n',"\\n")),ValueDomain::Unknown=>"?".into(),ValueDomain::Unsigned(x)=>sf(*x as i64),ValueDomain::Boolean=>"1".into()}}
+pub fn fmt_val(v:&ValueDomain)->String{match v{ValueDomain::Signed(x)=>sf(*x),ValueDomain::Pointer(a)=>format!("*({:#x})",a),ValueDomain::String(s)=>format!("\"{}\"",s.replace('\n',"\\n")),ValueDomain::Unknown=>"?".into(),ValueDomain::Unsigned(x)=>sf(*x as i64),ValueDomain::Boolean=>"1".into()}}
 pub fn sf(v:i64)->String{if v==0{"0".into()}else if v>0&&v<=9999{v.to_string()}else if v<0&&v>=-9999{v.to_string()}else if v<0{format!("-{:#x}",-v)}else{format!("{:#x}",v)}}
 pub fn ro(op:&str)->Option<&str>{Some(match op{"eax"|"rax"=>"rax","ebx"|"rbx"=>"rbx","ecx"|"rcx"=>"rcx","edx"|"rdx"=>"rdx","esi"|"rsi"=>"rsi","edi"|"rdi"=>"rdi","rbp"=>"rbp","rsp"=>"rsp","r8d"|"r8"=>"r8","r9d"|"r9"=>"r9","r10d"|"r10"=>"r10","r11d"|"r11"=>"r11","r12d"|"r12"=>"r12","r13d"|"r13"=>"r13","r14d"|"r14"=>"r14","r15d"|"r15"=>"r15",_=>return None})}
 pub fn so(op:&str)->Option<i64>{

@@ -57,10 +57,12 @@ impl KSwitchContext {
 
 pub fn detect_dispatcher(cfg: &Cfg, _trace: &HashSet<u64>) -> Option<DispatcherInfo> {
     let mut by_pred: Vec<(u64, usize)> = cfg.blocks.iter()
+        .filter(|(_, b)| b.succs.contains(&b.addr)) // 自环（CFF dispatcher 特征）
+        .filter(|(_, b)| b.preds.len() >= 5)         // 至少 5 个前驱
         .map(|(&addr, b)| (addr, b.preds.len()))
         .collect();
     by_pred.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
-    by_pred.first().filter(|&&(_, c)| c >= 5).map(|&(addr, _)| {
+    by_pred.first().map(|&(addr, _)| {
         let block = &cfg.blocks[&addr];
         let cases: Vec<u64> = block.succs.iter().filter(|&&s| s != addr).copied().collect();
         DispatcherInfo { addr, state_var: "state".to_string(), case_addrs: cases, case_count: block.preds.len() }
