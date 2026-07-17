@@ -52,6 +52,7 @@ impl InferenceEngine {
         }
         // 跨函数类型传播（passes 之后，避免 passes 改写 stmts 后信息丢失）
         typeflow::propagate_types(&mut state, &self.sig_db);
+        // 多 trace 合并预留
         // 死变量消除（移除无引用的寄存器赋值）
         let _dead = dce::eliminate(&mut state, &ssa);
         let (addr_map, var_types) = self.build_addr_map(&state, &ssa);
